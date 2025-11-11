@@ -662,14 +662,22 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
     //region Resource Serving
 
     private void initializeResourceHandlers() {
+        Log.i(LOG_TAG, "🔧 Initializing resource handlers...");
+        
         // Serve files from the organized bundle directory (includes injected shim)
         resourceHandlers.add(new WebResourceHandler() {
             @Override
             public Uri remapUri(Uri uri) {
-                if (currentAssetBundle == null || servingDirectory == null) return null;
+                if (currentAssetBundle == null || servingDirectory == null) {
+                    Log.d(LOG_TAG, "Handler 1: Skipping - no currentAssetBundle or servingDirectory");
+                    return null;
+                }
 
                 String path = uri.getPath();
-                if (path == null) return null;
+                if (path == null) {
+                    Log.d(LOG_TAG, "Handler 1: Skipping - null path");
+                    return null;
+                }
 
                 // Remove leading slash
                 if (path.startsWith("/")) {
@@ -685,10 +693,54 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
                 File bundleServingDir = new File(servingDirectory, currentAssetBundle.getVersion());
                 File file = new File(bundleServingDir, path);
                 
+                Log.d(LOG_TAG, "Handler 1: Checking for file: " + file.getAbsolutePath() + " exists=" + file.exists());
+                
                 if (file.exists() && file.isFile()) {
+                    Log.i(LOG_TAG, "Handler 1: ✅ Serving from organized bundle: " + path);
                     return Uri.fromFile(file);
                 }
 
+                return null;
+            }
+        });
+
+        // Serve files from parent bundle (for assets not in the current downloaded bundle)
+        resourceHandlers.add(new WebResourceHandler() {
+            @Override
+            public Uri remapUri(Uri uri) {
+                if (currentAssetBundle == null) return null;
+                
+                AssetBundle parentBundle = currentAssetBundle.getParentAssetBundle();
+                if (parentBundle == null) return null;
+
+                String path = uri.getPath();
+                if (path == null) return null;
+
+                // Remove leading slash
+                if (path.startsWith("/")) {
+                    path = path.substring(1);
+                }
+
+                // Don't intercept local file system paths
+                if (path.startsWith(LOCAL_FILESYSTEM_PATH)) return null;
+
+                // Check if the asset exists in the parent bundle
+                AssetBundle.Asset asset = parentBundle.assetForUrlPath("/" + path);
+                if (asset != null) {
+                    File assetFile = asset.getFile();
+                    if (assetFile != null && assetFile.exists()) {
+                        Log.i(LOG_TAG, "Handler 2: ✅ Serving from parent bundle: " + path);
+                        return Uri.fromFile(assetFile);
+                    }
+                    
+                    // If it's an android_asset, return the asset URI
+                    Uri fileUri = asset.getFileUri();
+                    if (fileUri != null && fileUri.toString().contains("android_asset")) {
+                        Log.i(LOG_TAG, "Handler 2: ✅ Serving from parent bundle (android_asset): " + path);
+                        return fileUri;
+                    }
+                }
+                
                 return null;
             }
         });
@@ -735,11 +787,11 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
             }
         });
 
-        // Serve index.html as a last resort
+        // Serve index.html as a last resort (for SPA routing)
         resourceHandlers.add(new WebResourceHandler() {
             @Override
             public Uri remapUri(Uri uri) {
-                if (currentAssetBundle == null) return null;
+                if (currentAssetBundle == null || servingDirectory == null) return null;
 
                 String path = uri.getPath();
 
@@ -747,13 +799,33 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
                 if (path.startsWith(LOCAL_FILESYSTEM_PATH)) return null;
 
                 if (path.equals("/favicon.ico")) return null;
-
-                AssetBundle.Asset asset = currentAssetBundle.getIndexFile();
-                if (asset != null) {
-                    return asset.getFileUri();
-                } else {
-                    return null;
+                
+                // Don't serve index.html for static assets (JS, CSS, images, fonts, etc.)
+                // This handler is only for SPA routing (e.g., /dashboard, /profile)
+                if (path != null) {
+                    String lowerPath = path.toLowerCase();
+                    if (lowerPath.endsWith(".js") || lowerPath.endsWith(".css") || 
+                        lowerPath.endsWith(".png") || lowerPath.endsWith(".jpg") || lowerPath.endsWith(".jpeg") ||
+                        lowerPath.endsWith(".gif") || lowerPath.endsWith(".svg") || lowerPath.endsWith(".woff") ||
+                        lowerPath.endsWith(".woff2") || lowerPath.endsWith(".ttf") || lowerPath.endsWith(".eot") ||
+                        lowerPath.endsWith(".ico") || lowerPath.endsWith(".json") || lowerPath.endsWith(".map")) {
+                        Log.d(LOG_TAG, "Handler #4: Skipping - not serving index.html for asset: " + path);
+                        return null;
+                    }
                 }
+
+                // CRITICAL FIX: Serve index.html from the ORGANIZED bundle directory
+                // This ensures the WebAppLocalServer shim is included
+                File bundleServingDir = new File(servingDirectory, currentAssetBundle.getVersion());
+                File indexHtml = new File(bundleServingDir, "index.html");
+                
+                if (indexHtml.exists() && indexHtml.isFile()) {
+                    Log.i(LOG_TAG, "Handler #4: ✅ Serving organized index.html as fallback for SPA route: " + path);
+                    return Uri.fromFile(indexHtml);
+                }
+                
+                Log.d(LOG_TAG, "Handler #4: index.html not found in organized bundle");
+                return null;
             }
         });
     }
@@ -767,13 +839,21 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
      */
     @Nullable
     public WebResourceResponse handleRequest(@NonNull String path) {
+        Log.d(LOG_TAG, "🔍 handleRequest called with path: " + path);
+        
         Uri requestUri = Uri.parse("/" + path);
         Uri remappedUri = null;
         
+        Log.d(LOG_TAG, "  Number of handlers: " + resourceHandlers.size());
+        
         // Try each handler in order
-        for (WebResourceHandler handler : resourceHandlers) {
+        for (int i = 0; i < resourceHandlers.size(); i++) {
+            WebResourceHandler handler = resourceHandlers.get(i);
             remappedUri = handler.remapUri(requestUri);
-            if (remappedUri != null) break;
+            if (remappedUri != null) {
+                Log.i(LOG_TAG, "  ✅ Handler #" + (i + 1) + " matched! Remapped to: " + remappedUri);
+                break;
+            }
         }
         
         if (remappedUri != null) {
@@ -781,11 +861,14 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
                 ResourceApi resourceApi = new ResourceApi(assetManager);
                 ResourceApi.OpenForReadResult result = resourceApi.openForRead(remappedUri, true);
                 if (result.inputStream != null) {
+                    Log.i(LOG_TAG, "  ✅ Returning response for: " + path + " (mime: " + result.mimeType + ")");
                     return new WebResourceResponse(result.mimeType, "utf-8", result.inputStream);
                 }
             } catch (IOException e) {
-                Log.e(LOG_TAG, "Error opening resource: " + remappedUri, e);
+                Log.e(LOG_TAG, "  ❌ Error opening resource: " + remappedUri, e);
             }
+        } else {
+            Log.w(LOG_TAG, "  ❌ No handler matched for: " + path);
         }
         
         return null;
