@@ -3,6 +3,8 @@ package com.banjerluke.capacitormeteorwebapp;
 import android.net.Uri;
 import android.util.Log;
 
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.io.File;
 import java.io.IOException;
@@ -105,7 +107,7 @@ class AssetBundleDownloader {
                         // and compare autoupdateVersionCordova to the version in the manifest to verify
                         // if we downloaded the expected version
                         if (asset.filePath.equals("index.html")) {
-                            AssetBundle.RuntimeConfig runtimeConfig = assetBundle.getRuntimeConfig();
+                            JSONObject runtimeConfig = assetBundle.getRuntimeConfig();
                             if (runtimeConfig != null) {
                                 try {
                                     verifyRuntimeConfig(runtimeConfig);
@@ -176,37 +178,52 @@ class AssetBundleDownloader {
         }
     }
 
-    protected void verifyRuntimeConfig(AssetBundle.RuntimeConfig runtimeConfig) throws WebAppException {
+    protected void verifyRuntimeConfig(JSONObject runtimeConfig) throws WebAppException {
         String expectedVersion = assetBundle.getVersion();
-        String actualVersion = runtimeConfig.getAutoupdateVersionCordova();
+        String actualVersion = runtimeConfig.optString("autoupdateVersionCordova", null);
         if (actualVersion != null) {
             if (!actualVersion.equals(expectedVersion)) {
                 throw new WebAppException("Version mismatch for index page, expected: " + expectedVersion + ", actual: " + actualVersion);
             }
         }
 
-        String rootUrlString = runtimeConfig.getRootUrlString();
-        if (rootUrlString == null) {
+        String rootUrlString;
+        try {
+            rootUrlString = runtimeConfig.getString("ROOT_URL");
+            Uri rootUrl = Uri.parse(rootUrlString);
+            Log.d(LOG_TAG, "Downloaded bundle ROOT_URL: " + rootUrlString);
+            
+            // Check if previous ROOT_URL exists (may be null on first run)
+            String previousRootUrlString = webAppConfiguration.getRootUrlString();
+            if (previousRootUrlString != null) {
+                Log.d(LOG_TAG, "Previous ROOT_URL: " + previousRootUrlString);
+                Uri previousRootUrl = Uri.parse(previousRootUrlString);
+                if (!"localhost".equals(previousRootUrl.getHost()) && "localhost".equals(rootUrl.getHost())) {
+                    throw new WebAppException("ROOT_URL in downloaded asset bundle would change current ROOT_URL to localhost. Make sure ROOT_URL has been configured correctly on the server.");
+                }
+            } else {
+                Log.i(LOG_TAG, "No previous ROOT_URL configured (first run) - skipping ROOT_URL validation");
+            }
+        } catch (JSONException e) {
             throw new WebAppException("Could not find ROOT_URL in downloaded asset bundle");
         }
-        
-        Uri rootUrl = Uri.parse(rootUrlString);
-        String previousRootUrlString = webAppConfiguration.getRootUrlString();
-        if (previousRootUrlString != null) {
-            Uri previousRootUrl = Uri.parse(previousRootUrlString);
-            if (!"localhost".equals(previousRootUrl.getHost()) && "localhost".equals(rootUrl.getHost())) {
-                throw new WebAppException("ROOT_URL in downloaded asset bundle would change current ROOT_URL to localhost. Make sure ROOT_URL has been configured correctly on the server.");
-            }
-        }
 
-        String appId = runtimeConfig.getAppId();
-        if (appId == null) {
+        try {
+            String appId = runtimeConfig.getString("appId");
+            String configAppId = webAppConfiguration.getAppId();
+            Log.d(LOG_TAG, "Downloaded bundle appId: " + appId);
+            
+            // Only check appId if we have a previous one configured (may be null on first run)
+            if (configAppId != null) {
+                Log.d(LOG_TAG, "Previous appId: " + configAppId);
+                if (!appId.equals(configAppId)) {
+                    throw new WebAppException("appId in downloaded asset bundle does not match current appId. Make sure the server at " + rootUrlString + " is serving the right app.");
+                }
+            } else {
+                Log.i(LOG_TAG, "No previous appId configured (first run) - skipping appId validation");
+            }
+        } catch (JSONException e) {
             throw new WebAppException("Could not find appId in downloaded asset bundle");
-        }
-        
-        String currentAppId = webAppConfiguration.getAppId();
-        if (currentAppId != null && !appId.equals(currentAppId)) {
-            throw new WebAppException("appId in downloaded asset bundle does not match current appId. Make sure the server at " + rootUrlString + " is serving the right app.");
         }
     }
 

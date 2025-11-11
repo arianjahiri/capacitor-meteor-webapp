@@ -1,12 +1,15 @@
 package com.banjerluke.capacitormeteorwebapp;
 
+import android.net.Uri;
 import android.util.Log;
+
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
 import java.net.URLDecoder;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -15,17 +18,18 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class AssetBundle {
+class AssetBundle {
     private static final String LOG_TAG = "MeteorWebApp";
-    private static final Pattern runtimeConfigPattern = Pattern.compile("__meteor_runtime_config__ = JSON.parse\\(decodeURIComponent\\(\"([^\"]*)\"\\)\\)");
 
-    public final class Asset {
-        public final String filePath;
-        public final String urlPath;
-        public final String fileType;
-        public final boolean cacheable;
-        public final String hash;
-        public final String sourceMapUrlPath;
+    static final Pattern runtimeConfigPattern = Pattern.compile("__meteor_runtime_config__ = JSON.parse\\(decodeURIComponent\\(\"([^\"]*)\"\\)\\)");
+
+    final class Asset {
+        final String filePath;
+        final String urlPath;
+        final String fileType;
+        final boolean cacheable;
+        final String hash;
+        final String sourceMapUrlPath;
 
         Asset(String filePath, String urlPath, String fileType, boolean cacheable, String hash, String sourceMapUrlPath) {
             this.filePath = filePath;
@@ -36,8 +40,21 @@ public class AssetBundle {
             this.sourceMapUrlPath = sourceMapUrlPath;
         }
 
+        public Uri getFileUri() {
+            return Uri.withAppendedPath(AssetBundle.this.directoryUri, filePath);
+        }
+
         public File getFile() {
-            return new File(AssetBundle.this.directory, filePath);
+            Uri fileUri = getFileUri();
+            if (resourceApi != null) {
+                return resourceApi.mapUriToFile(fileUri);
+            } else {
+                // For File-based bundles, we can directly convert the URI
+                if ("file".equals(fileUri.getScheme())) {
+                    return new File(fileUri.getPath());
+                }
+                return null;
+            }
         }
 
         public File getTemporaryFile() throws IOException {
@@ -51,7 +68,8 @@ public class AssetBundle {
         }
     }
 
-    private File directory;
+    private final ResourceApi resourceApi;
+    private Uri directoryUri;
     private final AssetBundle parentAssetBundle;
 
     private final String version;
@@ -60,20 +78,28 @@ public class AssetBundle {
     private Map<String, Asset> ownAssetsByURLPath;
     private Asset indexFile;
 
-    private RuntimeConfig runtimeConfig;
+    private JSONObject runtimeConfig;
+    private String appId;
+    private String rootUrlString;
 
-    public AssetBundle(File directory) throws WebAppException {
-        this(directory, null, null);
+    public AssetBundle(ResourceApi resourceApi, Uri directoryUri) throws WebAppException {
+        this(resourceApi, directoryUri, null, null);
     }
 
-    public AssetBundle(File directory, AssetBundle parentAssetBundle) throws WebAppException {
-        this(directory, null, parentAssetBundle);
+    public AssetBundle(ResourceApi resourceApi, Uri directoryUri, AssetBundle parentAssetBundle) throws WebAppException {
+        this(resourceApi, directoryUri, null, parentAssetBundle);
     }
 
+    // Constructor for File-based bundles (downloaded bundles)
     public AssetBundle(File directory, AssetManifest manifest, AssetBundle parentAssetBundle) throws WebAppException {
-        Log.w(LOG_TAG, "Loading asset bundle from directory " + directory.getAbsolutePath());
+        this(null, Uri.fromFile(directory), manifest, parentAssetBundle);
+    }
 
-        this.directory = directory;
+    public AssetBundle(ResourceApi resourceApi, Uri directoryUri, AssetManifest manifest, AssetBundle parentAssetBundle) throws WebAppException {
+        Log.w(LOG_TAG, "Loading asset bundle from directory " + directoryUri.toString());
+
+        this.resourceApi = resourceApi;
+        this.directoryUri = directoryUri;
         this.parentAssetBundle = parentAssetBundle;
 
         if (manifest == null) {
@@ -86,7 +112,7 @@ public class AssetBundle {
         ownAssetsByURLPath = new HashMap<String, Asset>();
         for (AssetManifest.Entry entry : manifest.entries) {
             // Remove query parameters from url path
-            String urlPath = removeQueryString(entry.urlPath);
+            String urlPath = Uri.parse(entry.urlPath).getPath();
 
             if (parentAssetBundle == null || parentAssetBundle.cachedAssetForUrlPath(urlPath, entry.hash) == null) {
                 Asset asset = new Asset(entry.filePath, urlPath, entry.fileType, entry.cacheable, entry.hash, entry.sourceMapUrlPath);
@@ -106,11 +132,6 @@ public class AssetBundle {
         this.indexFile = indexFile;
     }
 
-    private String removeQueryString(String urlPath) {
-        int queryIndex = urlPath.indexOf('?');
-        return queryIndex >= 0 ? urlPath.substring(0, queryIndex) : urlPath;
-    }
-
     protected void addAsset(Asset asset) {
         ownAssetsByURLPath.put(asset.urlPath, asset);
     }
@@ -122,12 +143,12 @@ public class AssetBundle {
     public Asset assetForUrlPath(String urlPath) {
         Asset asset = ownAssetsByURLPath.get(urlPath);
         if (asset == null && parentAssetBundle != null) {
-            Log.d(LOG_TAG, "Asset " + urlPath + " not found in bundle " + version + ":" + directory.getAbsolutePath() + ", serving from parent bundle");
+            Log.d(LOG_TAG, "Asset " + urlPath + " not found in bundle " + version + ":" + directoryUri.toString() + ", serving from parent bundle");
             asset = parentAssetBundle.assetForUrlPath(urlPath);
         } else if (asset == null) {
-            Log.w(LOG_TAG, "Asset " + urlPath + " not found in bundle " + version + ":" + directory.getAbsolutePath() + ", no parent bundle");
+            Log.w(LOG_TAG, "Asset " + urlPath + " not found in bundle " + version + ":" + directoryUri.toString() + ", no parent bundle");
         } else {
-            Log.w(LOG_TAG, "Asset " + urlPath + " found in bundle " + version + ":" + directory.getAbsolutePath());
+            Log.w(LOG_TAG, "Asset " + urlPath + " found in bundle " + version + ":" + directoryUri.toString());
         }
         return asset;
     }
@@ -158,84 +179,113 @@ public class AssetBundle {
     }
 
     public File getDirectory() {
-        return directory;
+        if ("file".equals(directoryUri.getScheme())) {
+            return new File(directoryUri.getPath());
+        }
+        return null;
     }
 
     public AssetBundle getParentAssetBundle() {
         return parentAssetBundle;
     }
 
-    public RuntimeConfig getRuntimeConfig() {
-        if (runtimeConfig == null && indexFile != null) {
-            try {
-                File indexFileURL = indexFile.getFile();
-                runtimeConfig = loadRuntimeConfigFromIndexFile(indexFileURL);
-            } catch (WebAppException e) {
-                Log.e("AssetBundle", "Error loading runtime config: " + e.getMessage());
-            }
+    public JSONObject getRuntimeConfig() {
+        if (runtimeConfig == null) {
+            runtimeConfig = loadRuntimeConfig(getIndexFile().getFileUri());
         }
         return runtimeConfig;
     }
 
     public String getAppId() {
-        RuntimeConfig config = getRuntimeConfig();
-        return config != null ? config.getAppId() : null;
+        if (appId == null) {
+            JSONObject runtimeConfig = getRuntimeConfig();
+            if (runtimeConfig != null) {
+                try {
+                    appId = runtimeConfig.getString("appId");
+                } catch (JSONException e) {
+                    Log.w(LOG_TAG, "Error reading APP_ID from runtime config", e);
+                }
+            }
+        }
+        return appId;
     }
 
     public String getRootUrlString() {
-        RuntimeConfig config = getRuntimeConfig();
-        return config != null ? config.getRootUrlString() : null;
+        if (rootUrlString == null) {
+            JSONObject runtimeConfig = getRuntimeConfig();
+            if (runtimeConfig != null) {
+                try {
+                    rootUrlString = runtimeConfig.getString("ROOT_URL");
+                } catch (JSONException e) {
+                    Log.w(LOG_TAG, "Error reading ROOT_URL from runtime config", e);
+                }
+            }
+        }
+        return rootUrlString;
+    }
+
+    void didMoveToDirectoryAtUri(Uri directoryUri) {
+        this.directoryUri = directoryUri;
     }
 
     void didMoveToDirectory(File directory) {
-        this.directory = directory;
+        this.directoryUri = Uri.fromFile(directory);
     }
 
     private AssetManifest loadAssetManifest() throws WebAppException {
-        File manifestFile = new File(directory, "program.json");
+        Uri manifestUri = Uri.withAppendedPath(directoryUri, "program.json");
         try {
-            String string = IOUtils.stringFromInputStream(new FileInputStream(manifestFile));
+            String string = stringFromUri(manifestUri);
             return new AssetManifest(string);
         } catch (IOException e) {
             throw new WebAppException("Error loading asset manifest", e);
         }
     }
 
-    public static RuntimeConfig loadRuntimeConfigFromIndexFile(File indexFile) throws WebAppException {
+    JSONObject loadRuntimeConfig(Uri uri) {
         try {
-            String string = IOUtils.stringFromInputStream(new FileInputStream(indexFile));
+            String string = stringFromUri(uri);
             Matcher matcher = runtimeConfigPattern.matcher(string);
             if (!matcher.find()) {
-                throw new WebAppException("Could not find runtime config in index file");
+                Log.e(LOG_TAG, "Could not find runtime config in index file");
+                return null;
             }
             String runtimeConfigString = URLDecoder.decode(matcher.group(1), "UTF-8");
-            return new RuntimeConfig(new org.json.JSONObject(runtimeConfigString));
+            return new JSONObject(runtimeConfigString);
         } catch (IOException e) {
-            throw new WebAppException("Error loading index file", e);
+            Log.e(LOG_TAG, "Error loading index file", e);
+            return null;
         } catch (IllegalStateException e) {
-            throw new WebAppException("Could not find runtime config in index file", e);
+            Log.e(LOG_TAG, "Could not find runtime config in index file", e);
+            return null;
         } catch (JSONException e) {
-            throw new WebAppException("Error parsing runtime config", e);
+            Log.e(LOG_TAG, "Error parsing runtime config", e);
+            return null;
         }
     }
 
-    public static class RuntimeConfig {
-        private final JSONObject json;
-
-        public RuntimeConfig(JSONObject json) {
-            this.json = json;
-        }
-
-        public String getAppId() {
-            return json.optString("appId", null);
-        }
-
-        public String getRootUrlString() {
-            return json.optString("ROOT_URL", null);
-        }
-
-        public String getAutoupdateVersionCordova() {
-            return json.optString("autoupdateVersionCordova", null);
+    private String stringFromUri(Uri uri) throws IOException {
+        InputStream inputStream = null;
+        try {
+            if (resourceApi != null) {
+                inputStream = resourceApi.openForRead(uri, true).inputStream;
+            } else {
+                // For File-based bundles, open directly
+                if ("file".equals(uri.getScheme())) {
+                    File file = new File(uri.getPath());
+                    inputStream = new java.io.FileInputStream(file);
+                } else {
+                    throw new IOException("Cannot open non-file URI without resourceApi: " + uri);
+                }
+            }
+            return IOUtils.stringFromInputStream(inputStream);
+        } finally {
+            if (inputStream != null) {
+                try {
+                    inputStream.close();
+                } catch (IOException e) {
+                }
+            }
         }
     }
 }

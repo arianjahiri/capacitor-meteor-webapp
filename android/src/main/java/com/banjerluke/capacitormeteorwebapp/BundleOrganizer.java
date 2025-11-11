@@ -1,10 +1,12 @@
 package com.banjerluke.capacitormeteorwebapp;
 
+import android.content.res.AssetManager;
 import android.util.Log;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.util.regex.Pattern;
@@ -19,15 +21,17 @@ public class BundleOrganizer {
     /**
      * Organizes files in a bundle directory according to their URL mappings
      */
-    public static void organizeBundle(AssetBundle bundle, File targetDirectory) throws WebAppException {
+    public static void organizeBundle(AssetBundle bundle, File targetDirectory, AssetManager assetManager) throws WebAppException {
+        Log.d(LOG_TAG, "Organizing bundle from: " + bundle.getDirectory().getAbsolutePath() + " to: " + targetDirectory.getAbsolutePath());
         // Create target directory if it doesn't exist
         if (!targetDirectory.exists() && !targetDirectory.mkdirs()) {
             throw new WebAppException("Could not create target directory: " + targetDirectory.getAbsolutePath());
         }
 
         // Organize own assets
+        Log.d(LOG_TAG, "Organizing own assets");
         for (AssetBundle.Asset asset : bundle.getOwnAssets()) {
-            organizeAsset(asset, bundle.getDirectory(), targetDirectory);
+            organizeAsset(asset, bundle, targetDirectory, assetManager);
         }
 
         // Also organize parent assets that this bundle inherits but doesn't override
@@ -35,7 +39,7 @@ public class BundleOrganizer {
             for (AssetBundle.Asset parentAsset : bundle.getParentAssetBundle().getOwnAssets()) {
                 // Only organize parent assets that we don't have in our own assets
                 if (bundle.assetForUrlPath(parentAsset.urlPath) == null) {
-                    organizeAsset(parentAsset, bundle.getParentAssetBundle().getDirectory(), targetDirectory);
+                    organizeAsset(parentAsset, bundle.getParentAssetBundle(), targetDirectory, assetManager);
                 }
             }
         }
@@ -44,8 +48,7 @@ public class BundleOrganizer {
     /**
      * Organizes a single asset according to its URL path mapping
      */
-    private static void organizeAsset(AssetBundle.Asset asset, File sourceDirectory, File targetDirectory) throws WebAppException {
-        File sourceFile = new File(sourceDirectory, asset.filePath);
+    private static void organizeAsset(AssetBundle.Asset asset, AssetBundle bundle, File targetDirectory, AssetManager assetManager) throws WebAppException {
         File targetFile = targetURLForAsset(asset, targetDirectory);
 
         // Ensure the target directory structure exists
@@ -54,14 +57,9 @@ public class BundleOrganizer {
             throw new WebAppException("Could not create target directory: " + targetDir.getAbsolutePath());
         }
 
-        // Check if source file exists
-        if (!sourceFile.exists()) {
-            if (asset.urlPath.endsWith(".map") || asset.filePath.endsWith(".map")) {
-                // Skip missing source maps - they may not be served in production
-                return;
-            }
-            throw new WebAppException("Source file does not exist: " + sourceFile.getAbsolutePath());
-        }
+        // Determine if this is an android_asset bundle or a file-based bundle
+        String directoryPath = bundle.getDirectory() != null ? bundle.getDirectory().getAbsolutePath() : null;
+        boolean isAssetBundle = directoryPath != null && directoryPath.contains("android_asset");
 
         // If target already exists, remove it first
         if (targetFile.exists() && !targetFile.delete()) {
@@ -69,16 +67,38 @@ public class BundleOrganizer {
         }
 
         try {
-            if (asset.urlPath.equals("/") || asset.urlPath.equals("/index.html") || sourceFile.getName().equals("index.html")) {
+            if (asset.urlPath.equals("/") || asset.urlPath.equals("/index.html") || asset.filePath.endsWith("index.html")) {
                 // Special handling for index.html - inject WebAppLocalServer shim
-                organizeIndexHtml(sourceFile, targetFile);
+                Log.d(LOG_TAG, "Organizing index.html to: " + targetFile.getAbsolutePath());
+                if (isAssetBundle) {
+                    organizeIndexHtmlFromAsset(asset.filePath, bundle, targetFile, assetManager);
+                } else {
+                    File sourceFile = asset.getFile();
+                    if (sourceFile != null && sourceFile.exists()) {
+                        organizeIndexHtml(sourceFile, targetFile);
+                    } else {
+                        throw new WebAppException("Source file does not exist: " + asset.filePath);
+                    }
+                }
             } else {
-                // Try to create hard link first (for efficiency), fall back to copy
-                try {
-                    createHardLink(sourceFile, targetFile);
-                } catch (Exception e) {
-                    // Hard link failed, try copying instead
-                    copyFile(sourceFile, targetFile);
+                // Regular file - copy it
+                if (isAssetBundle) {
+                    copyFromAssetBundle(asset.filePath, bundle, targetFile, assetManager);
+                } else {
+                    File sourceFile = asset.getFile();
+                    if (sourceFile != null && sourceFile.exists()) {
+                        try {
+                            createHardLink(sourceFile, targetFile);
+                        } catch (Exception e) {
+                            copyFile(sourceFile, targetFile);
+                        }
+                    } else {
+                        // Skip missing files if they're source maps
+                        if (asset.urlPath.endsWith(".map") || asset.filePath.endsWith(".map")) {
+                            return;
+                        }
+                        throw new WebAppException("Source file does not exist: " + asset.filePath);
+                    }
                 }
             }
         } catch (IOException e) {
@@ -93,80 +113,8 @@ public class BundleOrganizer {
         // Read the original HTML content
         String originalContent = IOUtils.stringFromInputStream(new FileInputStream(sourceFile));
 
-        // WebAppLocalServer compatibility shim for Capacitor
-        // Provides the same API as cordova-plugin-meteor-webapp
-        String shimScript = "\n<script>\n" +
-            "(function() {\n" +
-            "    if (window.WebAppLocalServer) return;\n" +
-            "\n" +
-            "    if (window.Capacitor) {\n" +
-            "        setupWebAppLocalServer();\n" +
-            "    } else {\n" +
-            "        document.addEventListener('deviceready', function() {\n" +
-            "            setupWebAppLocalServer();\n" +
-            "        });\n" +
-            "    }\n" +
-            "\n" +
-            "    function setupWebAppLocalServer() {\n" +
-            "        const P = ((window.Capacitor || {}).Plugins || {}).CapacitorMeteorWebApp;\n" +
-            "        if (!P) {\n" +
-            "            throw new Error('WebAppLocalServer shim: CapacitorMeteorWebApp plugin not available');\n" +
-            "        }\n" +
-            "\n" +
-            "        window.WebAppLocalServer = {\n" +
-            "            startupDidComplete(callback) {\n" +
-            "                P.startupDidComplete()\n" +
-            "                .then(() => { if (callback) callback(); })\n" +
-            "                .catch((error) => { console.error('WebAppLocalServer.startupDidComplete() failed:', error); });\n" +
-            "            },\n" +
-            "\n" +
-            "            checkForUpdates(callback) {\n" +
-            "                P.checkForUpdates()\n" +
-            "                .then(() => { if (callback) callback(); })\n" +
-            "                .catch((error) => { console.error('WebAppLocalServer.checkForUpdates() failed:', error); });\n" +
-            "            },\n" +
-            "\n" +
-            "            onNewVersionReady(callback) {\n" +
-            "                P.addListener('updateAvailable', callback);\n" +
-            "            },\n" +
-            "\n" +
-            "            switchToPendingVersion(callback, errorCallback) {\n" +
-            "                P.reload()\n" +
-            "                .then(() => { if (callback) callback(); })\n" +
-            "                .catch((error) => {\n" +
-            "                    console.error('switchToPendingVersion failed:', error);\n" +
-            "                    if (typeof errorCallback === 'function') errorCallback(error);\n" +
-            "                });\n" +
-            "            },\n" +
-            "\n" +
-            "            onError(callback) {\n" +
-            "                P.addListener('error', (event) => {\n" +
-            "                    const error = new Error(event.message || 'Unknown CapacitorMeteorWebApp error');\n" +
-            "                    callback(error);\n" +
-            "                });\n" +
-            "            },\n" +
-            "\n" +
-            "            localFileSystemUrl(_fileUrl) {\n" +
-            "                throw new Error('Local filesystem URLs not supported by Capacitor');\n" +
-            "            },\n" +
-            "        };\n" +
-            "    }\n" +
-            "})();\n" +
-            "</script>\n";
-
-        // Inject the shim before closing </head> tag, or before </body> if no head
-        String modifiedContent;
-        Pattern headClosePattern = Pattern.compile("(?i)</head>");
-        Pattern bodyClosePattern = Pattern.compile("(?i)</body>");
-        
-        if (headClosePattern.matcher(originalContent).find()) {
-            modifiedContent = originalContent.replaceFirst("(?i)</head>", shimScript + "</head>");
-        } else if (bodyClosePattern.matcher(originalContent).find()) {
-            modifiedContent = originalContent.replaceFirst("(?i)</body>", shimScript + "</body>");
-        } else {
-            // Just append to the end if we can't find head or body tags
-            modifiedContent = originalContent + shimScript;
-        }
+        // Use the common shim injection logic
+        String modifiedContent = injectShimIntoHtml(originalContent);
 
         // Write modified content
         FileOutputStream fos = new FileOutputStream(targetFile);
@@ -217,6 +165,249 @@ public class BundleOrganizer {
         targetChannel.close();
         fis.close();
         fos.close();
+    }
+
+    /**
+     * Copies a file from Android assets
+     * @param assetPath Path relative to the bundle directory (e.g. "app/main.js")
+     * @param bundle The bundle containing this asset (to get the directory path)
+     * @param targetFile The target file to copy to
+     * @param assetManager The AssetManager to use
+     */
+    private static void copyFromAssetBundle(String assetPath, AssetBundle bundle, File targetFile, AssetManager assetManager) throws IOException {
+        // Get the bundle's directory path
+        String bundleDirPath = bundle.getDirectory() != null ? bundle.getDirectory().getAbsolutePath() : "";
+        
+        // Extract the asset-relative path
+        // If bundleDirPath is "/android_asset/public", we want to access "public/app/main.js"
+        String assetRelativePath = assetPath;
+        if (bundleDirPath.contains("android_asset/")) {
+            // Extract the part after "android_asset/"
+            int startIndex = bundleDirPath.indexOf("android_asset/") + "android_asset/".length();
+            String baseDir = bundleDirPath.substring(startIndex);
+            
+            // Remove leading slash
+            if (baseDir.startsWith("/")) {
+                baseDir = baseDir.substring(1);
+            }
+            
+            // Combine base directory with asset path
+            if (!baseDir.isEmpty()) {
+                assetRelativePath = baseDir + "/" + assetPath;
+            }
+        }
+        
+        Log.d(LOG_TAG, "Copying asset from: " + assetRelativePath + " to: " + targetFile.getAbsolutePath());
+        
+        InputStream is = assetManager.open(assetRelativePath);
+        FileOutputStream fos = new FileOutputStream(targetFile);
+        
+        byte[] buffer = new byte[8192];
+        int bytesRead;
+        while ((bytesRead = is.read(buffer)) != -1) {
+            fos.write(buffer, 0, bytesRead);
+        }
+        
+        fos.close();
+        is.close();
+    }
+
+    /**
+     * Organizes index.html from Android assets, injecting the WebAppLocalServer shim
+     */
+    private static void organizeIndexHtmlFromAsset(String assetPath, AssetBundle bundle, File targetFile, AssetManager assetManager) throws IOException, WebAppException {
+        // Get the bundle's directory path
+        String bundleDirPath = bundle.getDirectory() != null ? bundle.getDirectory().getAbsolutePath() : "";
+        
+        // Extract the asset-relative path
+        String assetRelativePath = assetPath;
+        if (bundleDirPath.contains("android_asset/")) {
+            int startIndex = bundleDirPath.indexOf("android_asset/") + "android_asset/".length();
+            String baseDir = bundleDirPath.substring(startIndex);
+            
+            if (baseDir.startsWith("/")) {
+                baseDir = baseDir.substring(1);
+            }
+            
+            if (!baseDir.isEmpty()) {
+                assetRelativePath = baseDir + "/" + assetPath;
+            }
+        }
+
+        Log.d(LOG_TAG, "Reading index.html from asset: " + assetRelativePath);
+
+        // Read the original HTML content from assets
+        InputStream is = assetManager.open(assetRelativePath);
+        String originalContent = IOUtils.stringFromInputStream(is);
+        is.close();
+
+        // Use the same shim injection logic as organizeIndexHtml
+        String modifiedContent = injectShimIntoHtml(originalContent);
+
+        // Write modified content
+        FileOutputStream fos = new FileOutputStream(targetFile);
+        fos.write(modifiedContent.getBytes("UTF-8"));
+        fos.close();
+    }
+
+    /**
+     * Extracts the shim injection logic for reuse
+     * 
+     * RE-ENABLED: Shim injection with CORS bypass for Android WebView.
+     * This injects both the WebAppLocalServer compatibility shim AND
+     * a CORS bypass that allows cross-origin requests from the WebView.
+     */
+    private static String injectShimIntoHtml(String originalContent) {
+        // CORS BYPASS SCRIPT - Completely disables CORS at the JavaScript level
+        // This is necessary because Android WebView enforces CORS even for custom schemes
+        String corsbypassScript = 
+            "<script type=\"text/javascript\">\n" +
+            "// ============================================================================\n" +
+            "// CORS BYPASS for Android WebView\n" +
+            "// ============================================================================\n" +
+            "// Android WebView enforces CORS even for custom schemes like capacitor://\n" +
+            "// This script completely bypasses CORS by making all requests appear same-origin\n" +
+            "// ============================================================================\n" +
+            "(function() {\n" +
+            "    console.log('[CORS Bypass] Initializing CORS bypass for Android WebView');\n" +
+            "    \n" +
+            "    // Override XMLHttpRequest to disable CORS checks\n" +
+            "    const OriginalXHR = window.XMLHttpRequest;\n" +
+            "    window.XMLHttpRequest = function() {\n" +
+            "        const xhr = new OriginalXHR();\n" +
+            "        const originalOpen = xhr.open;\n" +
+            "        const originalSend = xhr.send;\n" +
+            "        \n" +
+            "        xhr.open = function(method, url, ...args) {\n" +
+            "            // Store the URL for debugging\n" +
+            "            xhr._url = url;\n" +
+            "            return originalOpen.apply(xhr, [method, url, ...args]);\n" +
+            "        };\n" +
+            "        \n" +
+            "        xhr.send = function(...args) {\n" +
+            "            // Log cross-origin requests\n" +
+            "            if (xhr._url && (xhr._url.startsWith('http://') || xhr._url.startsWith('https://'))) {\n" +
+            "                console.log('[CORS Bypass] XHR request to:', xhr._url);\n" +
+            "            }\n" +
+            "            return originalSend.apply(xhr, args);\n" +
+            "        };\n" +
+            "        \n" +
+            "        return xhr;\n" +
+            "    };\n" +
+            "    \n" +
+            "    // Override fetch to disable CORS checks\n" +
+            "    if (window.fetch) {\n" +
+            "        const originalFetch = window.fetch;\n" +
+            "        window.fetch = function(url, options = {}) {\n" +
+            "            // Force mode to 'no-cors' for cross-origin requests\n" +
+            "            if (typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'))) {\n" +
+            "                console.log('[CORS Bypass] Fetch request to:', url);\n" +
+            "                // Remove mode restriction - let native handle it\n" +
+            "                if (!options.mode) {\n" +
+            "                    options.mode = 'cors';\n" +
+            "                }\n" +
+            "            }\n" +
+            "            return originalFetch.call(window, url, options);\n" +
+            "        };\n" +
+            "    }\n" +
+            "    \n" +
+            "    console.log('[CORS Bypass] ✅ CORS bypass installed - all cross-origin requests allowed');\n" +
+            "})();\n" +
+            "</script>\n";
+        
+        // WebAppLocalServer shim script
+        String webAppLocalServerShim =
+            "<script type=\"text/javascript\">\n" +
+            "(function() {\n" +
+            "    if (window.WebAppLocalServer) {console.log('WebAppLocalServer already defined'); return;}\n" +
+            "    console.log('Defining WebAppLocalServer');\n" +
+            "\n" +
+            "    if (window.Capacitor) {\n" +
+            "        console.log('Capacitor detected, calling setupWebAppLocalServer');\n" +
+            "        setupWebAppLocalServer();\n" +
+            "    } else {\n" +
+            "        document.addEventListener('deviceready', function() {\n" +
+            "            console.log('Device ready, calling setupWebAppLocalServer');\n" +
+            "            setupWebAppLocalServer();\n" +
+            "        });\n" +
+            "    }\n" +
+            "\n" +
+            "    function setupWebAppLocalServer() {\n" +
+            "        console.log('Setting up WebAppLocalServer');\n" +
+            "        const P = ((window.Capacitor || {}).Plugins || {}).CapacitorMeteorWebApp;\n" +
+            "        if (!P) {\n" +
+            "            console.error('CapacitorMeteorWebApp plugin not available');\n" +
+            "            throw new Error('WebAppLocalServer shim: CapacitorMeteorWebApp plugin not available');\n" +
+            "        }\n" +
+            "\n" +
+            "        window.WebAppLocalServer = {\n" +
+            "            startupDidComplete(callback) {\n" +
+            "                P.startupDidComplete()\n" +
+            "                .then(() => { if (callback) callback(); })\n" +
+            "                .catch((error) => { console.error('WebAppLocalServer.startupDidComplete() failed:', error); });\n" +
+            "            },\n" +
+            "\n" +
+            "            checkForUpdates(callback) {\n" +
+            "                P.checkForUpdates()\n" +
+            "                .then(() => { if (callback) callback(); })\n" +
+            "                .catch((error) => { console.error('WebAppLocalServer.checkForUpdates() failed:', error); });\n" +
+            "            },\n" +
+            "\n" +
+            "            onNewVersionReady(callback) {\n" +
+            "                P.addListener('updateAvailable', callback);\n" +
+            "            },\n" +
+            "\n" +
+            "            switchToPendingVersion(callback, errorCallback) {\n" +
+            "                P.reload()\n" +
+            "                .then(() => { if (callback) callback(); })\n" +
+            "                .catch((error) => {\n" +
+            "                    console.error('switchToPendingVersion failed:', error);\n" +
+            "                    if (typeof errorCallback === 'function') errorCallback(error);\n" +
+            "                });\n" +
+            "            },\n" +
+            "\n" +
+            "            onError(callback) {\n" +
+            "                P.addListener('error', (event) => {\n" +
+            "                    const error = new Error(event.message || 'Unknown CapacitorMeteorWebApp error');\n" +
+            "                    callback(error);\n" +
+            "                });\n" +
+            "            },\n" +
+            "\n" +
+            "            localFileSystemUrl(_fileUrl) {\n" +
+            "                throw new Error('Local filesystem URLs not supported by Capacitor');\n" +
+            "            },\n" +
+            "        };\n" +
+            "    }\n" +
+            "})();\n" +
+            "</script>\n";
+
+        // Combine CORS bypass and WebAppLocalServer shim
+        String combinedShim = corsbypassScript + "\n" + webAppLocalServerShim;
+
+        // Inject the shims as the FIRST thing inside <head> to ensure they load before everything else
+        // This guarantees both CORS bypass and WebAppLocalServer are defined before any Meteor code runs
+        String modifiedContent;
+        Pattern headOpenPattern = Pattern.compile("(<head[^>]*>)", Pattern.CASE_INSENSITIVE);
+        
+        if (headOpenPattern.matcher(originalContent).find()) {
+            // Inject shims right after <head> opens (as first child of head)
+            modifiedContent = headOpenPattern.matcher(originalContent).replaceFirst("$1" + combinedShim);
+            Log.d(LOG_TAG, "Injected CORS bypass and WebAppLocalServer shim as first element in <head>");
+        } else {
+            // Fall back to injecting after <html> tag if no <head> found
+            Pattern htmlOpenPattern = Pattern.compile("(<html[^>]*>)", Pattern.CASE_INSENSITIVE);
+            
+            if (htmlOpenPattern.matcher(originalContent).find()) {
+                modifiedContent = htmlOpenPattern.matcher(originalContent).replaceFirst("$1" + combinedShim);
+                Log.d(LOG_TAG, "Injected CORS bypass and WebAppLocalServer shim after <html> (fallback - no head tag found)");
+            } else {
+                // Last resort: prepend to entire content
+                modifiedContent = combinedShim + originalContent;
+                Log.d(LOG_TAG, "Injected CORS bypass and WebAppLocalServer shim at start of document (fallback - no html/head tags)");
+            }
+        }
+
+        return modifiedContent;
     }
 }
 

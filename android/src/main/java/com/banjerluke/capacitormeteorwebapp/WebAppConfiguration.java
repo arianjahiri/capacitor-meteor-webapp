@@ -1,6 +1,5 @@
 package com.banjerluke.capacitormeteorwebapp;
 
-import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Log;
 
@@ -10,11 +9,6 @@ import java.util.Set;
 
 class WebAppConfiguration {
     private SharedPreferences preferences;
-    private static final String PREFS_NAME = "MeteorWebApp";
-
-    public WebAppConfiguration(Context context) {
-        this.preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-    }
 
     public WebAppConfiguration(SharedPreferences preferences) {
         this.preferences = preferences;

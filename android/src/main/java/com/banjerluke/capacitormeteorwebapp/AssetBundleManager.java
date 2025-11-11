@@ -196,7 +196,7 @@ class AssetBundleManager {
             }
 
             try {
-                partiallyDownloadedAssetBundle = new AssetBundle(partialDownloadDirectory, initialAssetBundle);
+                partiallyDownloadedAssetBundle = new AssetBundle(partialDownloadDirectory, null, initialAssetBundle);
             } catch (Exception e) {
                 Log.w(LOG_TAG, "Could not load partially downloaded asset bundle", e);
             }
