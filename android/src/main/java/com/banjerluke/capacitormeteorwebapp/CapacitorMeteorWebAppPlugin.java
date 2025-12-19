@@ -29,8 +29,6 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
     public static final String PREFS_NAME = "MeteorWebApp";
     private static final String LOCAL_FILESYSTEM_PATH = "/local-filesystem";
 
-    boolean isDebug = ((getContext().getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0);
-
     // Static reference for easy access from MainActivity
     private static CapacitorMeteorWebAppPlugin instance;
 
@@ -66,6 +64,12 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
     /** Timer used to wait for startup to complete after a reload */
     private Timer startupTimer;
     private long startupTimeout;
+
+    private boolean isProduction() {
+        Context ctx = getContext(); // only call when plugin is ready
+        if (ctx == null) return true; // safe default
+        return (ctx.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) == 0;
+    }
 
     //region Lifecycle
 
@@ -411,15 +415,15 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
     public void checkForUpdates(final PluginCall call) {
         Log.i(LOG_TAG, "checkForUpdates() called from JavaScript");
 
-        if (!isDebug) {
-            Log.w(LOG_TAG, "checkForUpdates() is disabled in production");
-            call.resolve();
-            return;
-        }
-
         if (currentAssetBundle == null) {
             Log.e(LOG_TAG, "Current asset bundle is null");
             call.reject("Plugin not initialized");
+            return;
+        }
+
+        if (isProduction()) {
+            Log.i(LOG_TAG, "checkForUpdates() skipped in Production");
+            call.resolve();
             return;
         }
 
