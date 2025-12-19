@@ -2,34 +2,34 @@ package com.banjerluke.capacitormeteorwebapp;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
 import android.content.res.AssetManager;
 import android.net.Uri;
 import android.util.Log;
 import android.webkit.WebResourceResponse;
-
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
-
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Timer;
 import java.util.TimerTask;
-
 import okhttp3.HttpUrl;
 
 @CapacitorPlugin(name = "CapacitorMeteorWebApp")
 public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleManager.Callback {
+
     private static final String LOG_TAG = "MeteorWebApp";
     public static final String PREFS_NAME = "MeteorWebApp";
     private static final String LOCAL_FILESYSTEM_PATH = "/local-filesystem";
+
+    boolean isDebug = ((getContext().getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0);
 
     // Static reference for easy access from MainActivity
     private static CapacitorMeteorWebAppPlugin instance;
@@ -79,12 +79,12 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
     @Override
     public void load() {
         super.load();
-        instance = this;  // Store instance for MainActivity access
+        instance = this; // Store instance for MainActivity access
         Log.i(LOG_TAG, "🔌 CapacitorMeteorWebAppPlugin.load() called - initializing plugin");
-        
+
         try {
             Context context = getContext();
-            
+
             // Get the assets directory paths
             try {
                 String assetsPath = context.getApplicationInfo().dataDir + "/app/src/main/assets";
@@ -122,17 +122,17 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
 
             resourceHandlers = new ArrayList<WebResourceHandler>();
             initializeResourceHandlers();
-            
+
             // Setup the current bundle for serving
             try {
                 setupCurrentBundle();
             } catch (WebAppException e) {
                 Log.e(LOG_TAG, "Could not setup current bundle", e);
             }
-            
+
             // Configure WebView user agent for Meteor compatibility
             configureUserAgent();
-            
+
             Log.i(LOG_TAG, "✅ CapacitorMeteorWebAppPlugin initialized successfully");
             Log.i(LOG_TAG, "📝 To enable request interception, see INTEGRATION.md for MainActivity setup");
         } catch (Exception e) {
@@ -151,7 +151,7 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
 
         // Create serving directory: /data/data/<app>/files/meteor-serving/<version>
         File bundleServingDirectory = new File(servingDirectory, currentAssetBundle.getVersion());
-        
+
         // Remove existing serving directory for this version
         if (bundleServingDirectory.exists()) {
             if (!IOUtils.deleteRecursively(bundleServingDirectory)) {
@@ -162,7 +162,7 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
         // Organize the bundle for serving (this injects the WebAppLocalServer shim)
         Log.i(LOG_TAG, "Organizing bundle " + currentAssetBundle.getVersion() + " for serving");
         BundleOrganizer.organizeBundle(currentAssetBundle, bundleServingDirectory, assetManager);
-        
+
         Log.d(LOG_TAG, "Bundle organized and ready to serve from: " + bundleServingDirectory.getAbsolutePath());
     }
 
@@ -177,69 +177,72 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
             return;
         }
 
-        getActivity().runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    android.webkit.WebView webView = bridge.getWebView();
-                    android.webkit.WebSettings settings = webView.getSettings();
-                    
-                    // Get the default user agent
-                    String originalUserAgent = settings.getUserAgentString();
-                    Log.i(LOG_TAG, "📱 Original User Agent: " + originalUserAgent);
-                    
-                    // Create a Cordova-compatible user agent that Meteor will recognize
-                    // Include "Meteor" to signal this is a Meteor Cordova client
-                    // This ensures Meteor serves the web.cordova bundle instead of web.browser
-                    String meteorUserAgent = originalUserAgent + " Meteor/1.0 (Cordova)";
-                    
-                    settings.setUserAgentString(meteorUserAgent);
-                    Log.i(LOG_TAG, "📱 Modified User Agent: " + meteorUserAgent);
-                    
-                    // ============================================================================
-                    // CRITICAL: Enable cross-origin requests from custom schemes (capacitor://)
-                    // ============================================================================
-                    // iOS WKWebView allows this by default, but Android WebView doesn't.
-                    // These settings allow the app loaded from capacitor://localhost to make
-                    // XHR/fetch requests to remote servers (like the Meteor DDP server).
-                    // This bypasses CORS restrictions that would otherwise block the requests.
-                    //
-                    // NOTE: These settings are safe in the context of a Capacitor app because:
-                    // 1. The app is served from a custom scheme (capacitor://) not from the web
-                    // 2. All HTML content is under our control (bundled with the app)
-                    // 3. This is the same security model that iOS WKWebView uses by default
-                    // ============================================================================
-                    
-                    settings.setAllowFileAccessFromFileURLs(true);
-                    settings.setAllowUniversalAccessFromFileURLs(true);
-                    
-                    // Allow mixed content (HTTPS requests from non-HTTPS origins)
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                        settings.setMixedContentMode(android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        getActivity().runOnUiThread(
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            android.webkit.WebView webView = bridge.getWebView();
+                            android.webkit.WebSettings settings = webView.getSettings();
+
+                            // Get the default user agent
+                            String originalUserAgent = settings.getUserAgentString();
+                            Log.i(LOG_TAG, "📱 Original User Agent: " + originalUserAgent);
+
+                            // Create a Cordova-compatible user agent that Meteor will recognize
+                            // Include "Meteor" to signal this is a Meteor Cordova client
+                            // This ensures Meteor serves the web.cordova bundle instead of web.browser
+                            String meteorUserAgent = originalUserAgent + " Meteor/1.0 (Cordova)";
+
+                            settings.setUserAgentString(meteorUserAgent);
+                            Log.i(LOG_TAG, "📱 Modified User Agent: " + meteorUserAgent);
+
+                            // ============================================================================
+                            // CRITICAL: Enable cross-origin requests from custom schemes (capacitor://)
+                            // ============================================================================
+                            // iOS WKWebView allows this by default, but Android WebView doesn't.
+                            // These settings allow the app loaded from capacitor://localhost to make
+                            // XHR/fetch requests to remote servers (like the Meteor DDP server).
+                            // This bypasses CORS restrictions that would otherwise block the requests.
+                            //
+                            // NOTE: These settings are safe in the context of a Capacitor app because:
+                            // 1. The app is served from a custom scheme (capacitor://) not from the web
+                            // 2. All HTML content is under our control (bundled with the app)
+                            // 3. This is the same security model that iOS WKWebView uses by default
+                            // ============================================================================
+
+                            settings.setAllowFileAccessFromFileURLs(true);
+                            settings.setAllowUniversalAccessFromFileURLs(true);
+
+                            // Allow mixed content (HTTPS requests from non-HTTPS origins)
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                                settings.setMixedContentMode(android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+                            }
+
+                            // Enable debugging for WebView
+                            android.webkit.WebView.setWebContentsDebuggingEnabled(true);
+
+                            // Try to disable web security using reflection (for older Android versions)
+                            try {
+                                Class<?> webSettingsClass = settings.getClass();
+                                java.lang.reflect.Method setAllowUniversalAccessFromFileURLsMethod = webSettingsClass.getMethod(
+                                    "setAllowUniversalAccessFromFileURLs",
+                                    boolean.class
+                                );
+                                setAllowUniversalAccessFromFileURLsMethod.invoke(settings, true);
+                                Log.i(LOG_TAG, "✅ Universal access enabled via reflection");
+                            } catch (Exception reflectionEx) {
+                                Log.d(LOG_TAG, "Could not enable universal access via reflection: " + reflectionEx.getMessage());
+                            }
+
+                            Log.i(LOG_TAG, "✅ WebView configured for cross-origin requests (CORS bypass)");
+                            Log.i(LOG_TAG, "✅ User agent configured for Meteor Cordova compatibility");
+                        } catch (Exception e) {
+                            Log.e(LOG_TAG, "❌ Failed to configure WebView: " + e.getMessage(), e);
+                        }
                     }
-                    
-                    // Enable debugging for WebView
-                    android.webkit.WebView.setWebContentsDebuggingEnabled(true);
-                    
-                    // Try to disable web security using reflection (for older Android versions)
-                    try {
-                        Class<?> webSettingsClass = settings.getClass();
-                        java.lang.reflect.Method setAllowUniversalAccessFromFileURLsMethod = 
-                            webSettingsClass.getMethod("setAllowUniversalAccessFromFileURLs", boolean.class);
-                        setAllowUniversalAccessFromFileURLsMethod.invoke(settings, true);
-                        Log.i(LOG_TAG, "✅ Universal access enabled via reflection");
-                    } catch (Exception reflectionEx) {
-                        Log.d(LOG_TAG, "Could not enable universal access via reflection: " + reflectionEx.getMessage());
-                    }
-                    
-                    Log.i(LOG_TAG, "✅ WebView configured for cross-origin requests (CORS bypass)");
-                    Log.i(LOG_TAG, "✅ User agent configured for Meteor Cordova compatibility");
-                    
-                } catch (Exception e) {
-                    Log.e(LOG_TAG, "❌ Failed to configure WebView: " + e.getMessage(), e);
                 }
-            }
-        });
+            );
     }
 
     void initializeAssetBundles() throws WebAppException {
@@ -250,7 +253,7 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
         try {
             String[] topLevelAssets = assetManager.list("");
             Log.d(LOG_TAG, "Top-level assets: " + java.util.Arrays.toString(topLevelAssets));
-            
+
             // Check if public or www directories exist
             for (String asset : topLevelAssets) {
                 if (asset.equals("public") || asset.equals("www")) {
@@ -289,19 +292,21 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
             Log.w(LOG_TAG, "⚠️ No initial asset bundle found in app assets.");
             Log.w(LOG_TAG, "The plugin requires a Meteor app to be bundled with the native app.");
             Log.w(LOG_TAG, "Please ensure program.json exists in one of: public/, www/, public/application/, or www/application/");
-            throw new WebAppException("No initial asset bundle found. Please ensure the Meteor app is built and bundled with the native app.");
+            throw new WebAppException(
+                "No initial asset bundle found. Please ensure the Meteor app is built and bundled with the native app."
+            );
         }
 
         // Downloaded versions are stored in /data/data/<app>/files/meteor
         File versionsDirectory = new File(getContext().getFilesDir(), "meteor");
-        
+
         // Serving directory for organized bundles
         servingDirectory = new File(getContext().getFilesDir(), "meteor-serving");
 
         // If the last seen initial version is different from the currently bundled
         // version, we delete the versions directory and unset lastDownloadedVersion
         // and blacklistedVersions
-        if (!initialAssetBundle.getVersion().equals(configuration.getLastSeenInitialVersion()))  {
+        if (!initialAssetBundle.getVersion().equals(configuration.getLastSeenInitialVersion())) {
             Log.d(LOG_TAG, "Detected new bundled version, removing versions directory if it exists");
             if (versionsDirectory.exists()) {
                 if (!IOUtils.deleteRecursively(versionsDirectory)) {
@@ -346,7 +351,10 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
                 currentAssetBundle = initialAssetBundle;
             } else {
                 Log.i(LOG_TAG, "📦 Using downloaded asset bundle version: " + lastDownloadedVersion);
-                if (configuration.getLastKnownGoodVersion() == null || !configuration.getLastKnownGoodVersion().equals(lastDownloadedVersion)) {
+                if (
+                    configuration.getLastKnownGoodVersion() == null ||
+                    !configuration.getLastKnownGoodVersion().equals(lastDownloadedVersion)
+                ) {
                     startStartupTimer();
                 }
             }
@@ -376,13 +384,16 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
         removeStartupTimer();
 
         startupTimer = new Timer();
-        startupTimer.schedule(new TimerTask() {
-            @Override
-            public void run() {
-                Log.w(LOG_TAG, "App startup timed out, reverting to last known good version");
-                revertToLastKnownGoodVersion();
-            }
-        }, startupTimeout);
+        startupTimer.schedule(
+            new TimerTask() {
+                @Override
+                public void run() {
+                    Log.w(LOG_TAG, "App startup timed out, reverting to last known good version");
+                    revertToLastKnownGoodVersion();
+                }
+            },
+            startupTimeout
+        );
     }
 
     private void removeStartupTimer() {
@@ -399,25 +410,35 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
     @PluginMethod
     public void checkForUpdates(final PluginCall call) {
         Log.i(LOG_TAG, "checkForUpdates() called from JavaScript");
+
+        if (!isDebug) {
+            Log.w(LOG_TAG, "checkForUpdates() is disabled in production");
+            call.resolve();
+            return;
+        }
+
         if (currentAssetBundle == null) {
             Log.e(LOG_TAG, "Current asset bundle is null");
             call.reject("Plugin not initialized");
             return;
         }
-        
-        new Thread(new Runnable() {
-            public void run() {
-                HttpUrl rootUrl = HttpUrl.parse(currentAssetBundle.getRootUrlString());
-                if (rootUrl == null) {
-                    Log.e(LOG_TAG, "checkForUpdates requires a rootURL to be configured");
-                    call.reject("checkForUpdates requires a rootURL to be configured");
-                    return;
+
+        new Thread(
+            new Runnable() {
+                public void run() {
+                    HttpUrl rootUrl = HttpUrl.parse(currentAssetBundle.getRootUrlString());
+                    if (rootUrl == null) {
+                        Log.e(LOG_TAG, "checkForUpdates requires a rootURL to be configured");
+                        call.reject("checkForUpdates requires a rootURL to be configured");
+                        return;
+                    }
+                    HttpUrl baseUrl = rootUrl.resolve("__cordova/");
+                    assetBundleManager.checkForUpdates(baseUrl);
+                    call.resolve();
                 }
-                HttpUrl baseUrl = rootUrl.resolve("__cordova/");
-                assetBundleManager.checkForUpdates(baseUrl);
-                call.resolve();
             }
-        }).start();
+        )
+            .start();
     }
 
     @PluginMethod
@@ -428,7 +449,7 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
             call.reject("Plugin not initialized");
             return;
         }
-        
+
         removeStartupTimer();
 
         Log.i(LOG_TAG, "Startup completed received. New good version is " + currentAssetBundle.getVersion());
@@ -436,13 +457,16 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
         // If startup completed successfully, we consider a version good
         configuration.setLastKnownGoodVersion(currentAssetBundle.getVersion());
 
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                assetBundleManager.removeAllDownloadedAssetBundlesExceptForVersion(currentAssetBundle.getVersion());
-                call.resolve();
+        new Thread(
+            new Runnable() {
+                @Override
+                public void run() {
+                    assetBundleManager.removeAllDownloadedAssetBundlesExceptForVersion(currentAssetBundle.getVersion());
+                    call.resolve();
+                }
             }
-        }).start();
+        )
+            .start();
     }
 
     @PluginMethod
@@ -453,7 +477,7 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
             call.reject("Plugin not initialized");
             return;
         }
-        
+
         String version = currentAssetBundle.getVersion();
         JSObject ret = new JSObject();
         ret.put("version", version);
@@ -463,7 +487,7 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
     @PluginMethod
     public void isUpdateAvailable(PluginCall call) {
         Log.d(LOG_TAG, "isUpdateAvailable() called from JavaScript");
-        
+
         boolean available = (pendingAssetBundle != null);
         JSObject ret = new JSObject();
         ret.put("available", available);
@@ -473,14 +497,14 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
     @PluginMethod
     public void reload(final PluginCall call) {
         Log.i(LOG_TAG, "reload() called from JavaScript");
-        
+
         if (pendingAssetBundle != null) {
             Log.i(LOG_TAG, "Reloading with pending version " + pendingAssetBundle.getVersion());
-            
+
             try {
                 // Organize the pending bundle for serving
                 File bundleServingDirectory = new File(servingDirectory, pendingAssetBundle.getVersion());
-                
+
                 // Remove existing serving directory for this version
                 if (bundleServingDirectory.exists()) {
                     if (!IOUtils.deleteRecursively(bundleServingDirectory)) {
@@ -490,23 +514,25 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
 
                 // Organize the bundle (this injects the WebAppLocalServer shim)
                 BundleOrganizer.organizeBundle(pendingAssetBundle, bundleServingDirectory, assetManager);
-                
+
                 // Make atomic switch
                 currentAssetBundle = pendingAssetBundle;
                 pendingAssetBundle = null;
                 switchedToNewVersion = true;
-                
+
                 // Reload the WebView
-                getActivity().runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        onReset();
-                        if (bridge != null && bridge.getWebView() != null) {
-                            bridge.getWebView().reload();
+                getActivity().runOnUiThread(
+                        new Runnable() {
+                            @Override
+                            public void run() {
+                                onReset();
+                                if (bridge != null && bridge.getWebView() != null) {
+                                    bridge.getWebView().reload();
+                                }
+                                call.resolve();
+                            }
                         }
-                        call.resolve();
-                    }
-                });
+                    );
             } catch (WebAppException e) {
                 Log.e(LOG_TAG, "Could not organize pending bundle", e);
                 call.reject("Could not organize pending bundle: " + e.getMessage());
@@ -541,17 +567,19 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
         // Only reload if we have a pending asset bundle to reload
         if (pendingAssetBundle != null) {
             Log.i(LOG_TAG, "Reverting to: " + pendingAssetBundle.getVersion());
-            getActivity().runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    currentAssetBundle = pendingAssetBundle;
-                    pendingAssetBundle = null;
-                    onReset();
-                    if (bridge != null && bridge.getWebView() != null) {
-                        bridge.getWebView().reload();
+            getActivity().runOnUiThread(
+                    new Runnable() {
+                        @Override
+                        public void run() {
+                            currentAssetBundle = pendingAssetBundle;
+                            pendingAssetBundle = null;
+                            onReset();
+                            if (bridge != null && bridge.getWebView() != null) {
+                                bridge.getWebView().reload();
+                            }
+                        }
                     }
-                }
-            });
+                );
         } else {
             Log.w(LOG_TAG, "No suitable version to revert to.");
         }
@@ -588,7 +616,7 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
         // the native code and web bundle were compatible. Since we're using Capacitor
         // and not Cordova, this check is not relevant and the field may not even exist
         // in the Meteor bundle manifest.
-        
+
         Log.d(LOG_TAG, "Allowing download of version: " + version);
         return true;
     }
@@ -598,51 +626,53 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
         Log.i(LOG_TAG, "Finished downloading " + assetBundle.getVersion());
         configuration.setLastDownloadedVersion(assetBundle.getVersion());
         pendingAssetBundle = assetBundle;
-        
+
         // Notify JavaScript of new version ready
         notifyListeners("newVersionReady", new JSObject().put("version", assetBundle.getVersion()));
-        
+
         // ============================================================================
         // TODO: REMOVE THIS - TEMPORARY AUTO-RELOAD FOR TESTING
         // In production, the Meteor app should call WebAppLocalServer.switchToPendingVersion()
         // when it's ready to reload (e.g., after showing a prompt to the user)
         // ============================================================================
         Log.w(LOG_TAG, "⚠️ TEMPORARY: Auto-reloading with new version " + assetBundle.getVersion());
-        
-        getActivity().runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    // Organize the pending bundle for serving
-                    File bundleServingDirectory = new File(servingDirectory, pendingAssetBundle.getVersion());
-                    
-                    // Remove existing serving directory for this version
-                    if (bundleServingDirectory.exists()) {
-                        if (!IOUtils.deleteRecursively(bundleServingDirectory)) {
-                            Log.w(LOG_TAG, "Could not delete existing serving directory");
+
+        getActivity().runOnUiThread(
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            // Organize the pending bundle for serving
+                            File bundleServingDirectory = new File(servingDirectory, pendingAssetBundle.getVersion());
+
+                            // Remove existing serving directory for this version
+                            if (bundleServingDirectory.exists()) {
+                                if (!IOUtils.deleteRecursively(bundleServingDirectory)) {
+                                    Log.w(LOG_TAG, "Could not delete existing serving directory");
+                                }
+                            }
+
+                            // Organize the bundle (this injects the WebAppLocalServer shim)
+                            BundleOrganizer.organizeBundle(pendingAssetBundle, bundleServingDirectory, assetManager);
+
+                            // Make atomic switch
+                            currentAssetBundle = pendingAssetBundle;
+                            pendingAssetBundle = null;
+                            switchedToNewVersion = true;
+
+                            Log.i(LOG_TAG, "⚠️ TEMPORARY: Reloading WebView with new version");
+
+                            // Reload the WebView
+                            onReset();
+                            if (bridge != null && bridge.getWebView() != null) {
+                                bridge.getWebView().reload();
+                            }
+                        } catch (WebAppException e) {
+                            Log.e(LOG_TAG, "Could not organize pending bundle for auto-reload", e);
                         }
                     }
-
-                    // Organize the bundle (this injects the WebAppLocalServer shim)
-                    BundleOrganizer.organizeBundle(pendingAssetBundle, bundleServingDirectory, assetManager);
-                    
-                    // Make atomic switch
-                    currentAssetBundle = pendingAssetBundle;
-                    pendingAssetBundle = null;
-                    switchedToNewVersion = true;
-                    
-                    Log.i(LOG_TAG, "⚠️ TEMPORARY: Reloading WebView with new version");
-                    
-                    // Reload the WebView
-                    onReset();
-                    if (bridge != null && bridge.getWebView() != null) {
-                        bridge.getWebView().reload();
-                    }
-                } catch (WebAppException e) {
-                    Log.e(LOG_TAG, "Could not organize pending bundle for auto-reload", e);
                 }
-            }
-        });
+            );
         // ============================================================================
         // END TEMPORARY AUTO-RELOAD CODE
         // ============================================================================
@@ -651,7 +681,7 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
     @Override
     public void onError(Throwable cause) {
         Log.w(LOG_TAG, "Download failure", cause);
-        
+
         // TODO: Notify JavaScript of error
         // This could be done via notifyListeners or an event
         notifyListeners("error", new JSObject().put("message", cause.getMessage()));
@@ -663,189 +693,210 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
 
     private void initializeResourceHandlers() {
         Log.i(LOG_TAG, "🔧 Initializing resource handlers...");
-        
+
         // Serve files from the organized bundle directory (includes injected shim)
-        resourceHandlers.add(new WebResourceHandler() {
-            @Override
-            public Uri remapUri(Uri uri) {
-                if (currentAssetBundle == null || servingDirectory == null) {
-                    Log.d(LOG_TAG, "Handler 1: Skipping - no currentAssetBundle or servingDirectory");
-                    return null;
-                }
-
-                String path = uri.getPath();
-                if (path == null) {
-                    Log.d(LOG_TAG, "Handler 1: Skipping - null path");
-                    return null;
-                }
-
-                // Remove leading slash
-                if (path.startsWith("/")) {
-                    path = path.substring(1);
-                }
-
-                // Handle root path
-                if (path.isEmpty()) {
-                    path = "index.html";
-                }
-
-                // Check if file exists in organized bundle directory
-                File bundleServingDir = new File(servingDirectory, currentAssetBundle.getVersion());
-                File file = new File(bundleServingDir, path);
-                
-                Log.d(LOG_TAG, "Handler 1: Checking for file: " + file.getAbsolutePath() + " exists=" + file.exists());
-                
-                if (file.exists() && file.isFile()) {
-                    Log.i(LOG_TAG, "Handler 1: ✅ Serving from organized bundle: " + path);
-                    return Uri.fromFile(file);
-                }
-
-                return null;
-            }
-        });
-
-        // Serve files from parent bundle (for assets not in the current downloaded bundle)
-        resourceHandlers.add(new WebResourceHandler() {
-            @Override
-            public Uri remapUri(Uri uri) {
-                if (currentAssetBundle == null) return null;
-                
-                AssetBundle parentBundle = currentAssetBundle.getParentAssetBundle();
-                if (parentBundle == null) return null;
-
-                String path = uri.getPath();
-                if (path == null) return null;
-
-                // Remove leading slash
-                if (path.startsWith("/")) {
-                    path = path.substring(1);
-                }
-
-                // Don't intercept local file system paths
-                if (path.startsWith(LOCAL_FILESYSTEM_PATH)) return null;
-
-                // Check if the asset exists in the parent bundle
-                AssetBundle.Asset asset = parentBundle.assetForUrlPath("/" + path);
-                if (asset != null) {
-                    File assetFile = asset.getFile();
-                    if (assetFile != null && assetFile.exists()) {
-                        Log.i(LOG_TAG, "Handler 2: ✅ Serving from parent bundle: " + path);
-                        return Uri.fromFile(assetFile);
-                    }
-                    
-                    // If it's an android_asset, return the asset URI
-                    Uri fileUri = asset.getFileUri();
-                    if (fileUri != null && fileUri.toString().contains("android_asset")) {
-                        Log.i(LOG_TAG, "Handler 2: ✅ Serving from parent bundle (android_asset): " + path);
-                        return fileUri;
-                    }
-                }
-                
-                return null;
-            }
-        });
-
-        // Serve files from www/public directory
-        resourceHandlers.add(new WebResourceHandler() {
-            @Override
-            public Uri remapUri(Uri uri) {
-                if (assetManagerCache == null) return null;
-
-                String path = uri.getPath();
-
-                // Do not serve files from /application, because these should only be served
-                // through the initial asset bundle
-                if (path.startsWith("/application")) return null;
-
-                if (path.startsWith("/")) {
-                    path = path.substring(1);
-                }
-
-                // Check in public directory (Capacitor convention)
-                if (assetManagerCache.exists("public/" + path)) {
-                    return Uri.parse("file:///android_asset/public/" + path);
-                }
-                // Fallback to www directory
-                else if (assetManagerCache.exists("www/" + path)) {
-                    return Uri.parse("file:///android_asset/www/" + path);
-                }
-                
-                return null;
-            }
-        });
-
-        // Serve local file system at /local-filesystem/<path>
-        resourceHandlers.add(new WebResourceHandler() {
-            @Override
-            public Uri remapUri(Uri uri) {
-                String path = uri.getPath();
-
-                if (!path.startsWith(LOCAL_FILESYSTEM_PATH)) return null;
-
-                String filePath = path.substring(LOCAL_FILESYSTEM_PATH.length());
-                return Uri.fromFile(new File(filePath));
-            }
-        });
-
-        // Serve index.html as a last resort (for SPA routing)
-        resourceHandlers.add(new WebResourceHandler() {
-            @Override
-            public Uri remapUri(Uri uri) {
-                if (currentAssetBundle == null || servingDirectory == null) return null;
-
-                String path = uri.getPath();
-
-                // Don't serve index.html for local file system paths
-                if (path.startsWith(LOCAL_FILESYSTEM_PATH)) return null;
-
-                if (path.equals("/favicon.ico")) return null;
-                
-                // Don't serve index.html for static assets (JS, CSS, images, fonts, etc.)
-                // This handler is only for SPA routing (e.g., /dashboard, /profile)
-                if (path != null) {
-                    String lowerPath = path.toLowerCase();
-                    if (lowerPath.endsWith(".js") || lowerPath.endsWith(".css") || 
-                        lowerPath.endsWith(".png") || lowerPath.endsWith(".jpg") || lowerPath.endsWith(".jpeg") ||
-                        lowerPath.endsWith(".gif") || lowerPath.endsWith(".svg") || lowerPath.endsWith(".woff") ||
-                        lowerPath.endsWith(".woff2") || lowerPath.endsWith(".ttf") || lowerPath.endsWith(".eot") ||
-                        lowerPath.endsWith(".ico") || lowerPath.endsWith(".json") || lowerPath.endsWith(".map")) {
-                        Log.d(LOG_TAG, "Handler #4: Skipping - not serving index.html for asset: " + path);
+        resourceHandlers.add(
+            new WebResourceHandler() {
+                @Override
+                public Uri remapUri(Uri uri) {
+                    if (currentAssetBundle == null || servingDirectory == null) {
+                        Log.d(LOG_TAG, "Handler 1: Skipping - no currentAssetBundle or servingDirectory");
                         return null;
                     }
-                }
 
-                // CRITICAL FIX: Serve index.html from the ORGANIZED bundle directory
-                // This ensures the WebAppLocalServer shim is included
-                File bundleServingDir = new File(servingDirectory, currentAssetBundle.getVersion());
-                File indexHtml = new File(bundleServingDir, "index.html");
-                
-                if (indexHtml.exists() && indexHtml.isFile()) {
-                    Log.i(LOG_TAG, "Handler #4: ✅ Serving organized index.html as fallback for SPA route: " + path);
-                    return Uri.fromFile(indexHtml);
+                    String path = uri.getPath();
+                    if (path == null) {
+                        Log.d(LOG_TAG, "Handler 1: Skipping - null path");
+                        return null;
+                    }
+
+                    // Remove leading slash
+                    if (path.startsWith("/")) {
+                        path = path.substring(1);
+                    }
+
+                    // Handle root path
+                    if (path.isEmpty()) {
+                        path = "index.html";
+                    }
+
+                    // Check if file exists in organized bundle directory
+                    File bundleServingDir = new File(servingDirectory, currentAssetBundle.getVersion());
+                    File file = new File(bundleServingDir, path);
+
+                    Log.d(LOG_TAG, "Handler 1: Checking for file: " + file.getAbsolutePath() + " exists=" + file.exists());
+
+                    if (file.exists() && file.isFile()) {
+                        Log.i(LOG_TAG, "Handler 1: ✅ Serving from organized bundle: " + path);
+                        return Uri.fromFile(file);
+                    }
+
+                    return null;
                 }
-                
-                Log.d(LOG_TAG, "Handler #4: index.html not found in organized bundle");
-                return null;
             }
-        });
+        );
+
+        // Serve files from parent bundle (for assets not in the current downloaded bundle)
+        resourceHandlers.add(
+            new WebResourceHandler() {
+                @Override
+                public Uri remapUri(Uri uri) {
+                    if (currentAssetBundle == null) return null;
+
+                    AssetBundle parentBundle = currentAssetBundle.getParentAssetBundle();
+                    if (parentBundle == null) return null;
+
+                    String path = uri.getPath();
+                    if (path == null) return null;
+
+                    // Remove leading slash
+                    if (path.startsWith("/")) {
+                        path = path.substring(1);
+                    }
+
+                    // Don't intercept local file system paths
+                    if (path.startsWith(LOCAL_FILESYSTEM_PATH)) return null;
+
+                    // Check if the asset exists in the parent bundle
+                    AssetBundle.Asset asset = parentBundle.assetForUrlPath("/" + path);
+                    if (asset != null) {
+                        File assetFile = asset.getFile();
+                        if (assetFile != null && assetFile.exists()) {
+                            Log.i(LOG_TAG, "Handler 2: ✅ Serving from parent bundle: " + path);
+                            return Uri.fromFile(assetFile);
+                        }
+
+                        // If it's an android_asset, return the asset URI
+                        Uri fileUri = asset.getFileUri();
+                        if (fileUri != null && fileUri.toString().contains("android_asset")) {
+                            Log.i(LOG_TAG, "Handler 2: ✅ Serving from parent bundle (android_asset): " + path);
+                            return fileUri;
+                        }
+                    }
+
+                    return null;
+                }
+            }
+        );
+
+        // Serve files from www/public directory
+        resourceHandlers.add(
+            new WebResourceHandler() {
+                @Override
+                public Uri remapUri(Uri uri) {
+                    if (assetManagerCache == null) return null;
+
+                    String path = uri.getPath();
+
+                    // Do not serve files from /application, because these should only be served
+                    // through the initial asset bundle
+                    if (path.startsWith("/application")) return null;
+
+                    if (path.startsWith("/")) {
+                        path = path.substring(1);
+                    }
+
+                    // Check in public directory (Capacitor convention)
+                    if (assetManagerCache.exists("public/" + path)) {
+                        return Uri.parse("file:///android_asset/public/" + path);
+                    }
+                    // Fallback to www directory
+                    else if (assetManagerCache.exists("www/" + path)) {
+                        return Uri.parse("file:///android_asset/www/" + path);
+                    }
+
+                    return null;
+                }
+            }
+        );
+
+        // Serve local file system at /local-filesystem/<path>
+        resourceHandlers.add(
+            new WebResourceHandler() {
+                @Override
+                public Uri remapUri(Uri uri) {
+                    String path = uri.getPath();
+
+                    if (!path.startsWith(LOCAL_FILESYSTEM_PATH)) return null;
+
+                    String filePath = path.substring(LOCAL_FILESYSTEM_PATH.length());
+                    return Uri.fromFile(new File(filePath));
+                }
+            }
+        );
+
+        // Serve index.html as a last resort (for SPA routing)
+        resourceHandlers.add(
+            new WebResourceHandler() {
+                @Override
+                public Uri remapUri(Uri uri) {
+                    if (currentAssetBundle == null || servingDirectory == null) return null;
+
+                    String path = uri.getPath();
+
+                    // Don't serve index.html for local file system paths
+                    if (path.startsWith(LOCAL_FILESYSTEM_PATH)) return null;
+
+                    if (path.equals("/favicon.ico")) return null;
+
+                    // Don't serve index.html for static assets (JS, CSS, images, fonts, etc.)
+                    // This handler is only for SPA routing (e.g., /dashboard, /profile)
+                    if (path != null) {
+                        String lowerPath = path.toLowerCase();
+                        if (
+                            lowerPath.endsWith(".js") ||
+                            lowerPath.endsWith(".css") ||
+                            lowerPath.endsWith(".png") ||
+                            lowerPath.endsWith(".jpg") ||
+                            lowerPath.endsWith(".jpeg") ||
+                            lowerPath.endsWith(".gif") ||
+                            lowerPath.endsWith(".svg") ||
+                            lowerPath.endsWith(".woff") ||
+                            lowerPath.endsWith(".woff2") ||
+                            lowerPath.endsWith(".ttf") ||
+                            lowerPath.endsWith(".eot") ||
+                            lowerPath.endsWith(".ico") ||
+                            lowerPath.endsWith(".json") ||
+                            lowerPath.endsWith(".map")
+                        ) {
+                            Log.d(LOG_TAG, "Handler #4: Skipping - not serving index.html for asset: " + path);
+                            return null;
+                        }
+                    }
+
+                    // CRITICAL FIX: Serve index.html from the ORGANIZED bundle directory
+                    // This ensures the WebAppLocalServer shim is included
+                    File bundleServingDir = new File(servingDirectory, currentAssetBundle.getVersion());
+                    File indexHtml = new File(bundleServingDir, "index.html");
+
+                    if (indexHtml.exists() && indexHtml.isFile()) {
+                        Log.i(LOG_TAG, "Handler #4: ✅ Serving organized index.html as fallback for SPA route: " + path);
+                        return Uri.fromFile(indexHtml);
+                    }
+
+                    Log.d(LOG_TAG, "Handler #4: index.html not found in organized bundle");
+                    return null;
+                }
+            }
+        );
     }
 
     /**
      * Handle a resource request - intercepts web requests and serves from bundles
      * This can be called by Capacitor's WebView client to intercept requests
-     * 
+     *
      * @param path The path being requested (e.g. "index.html" or "assets/app.js")
      * @return WebResourceResponse if we handle the request, null otherwise
      */
     @Nullable
     public WebResourceResponse handleRequest(@NonNull String path) {
         Log.d(LOG_TAG, "🔍 handleRequest called with path: " + path);
-        
+
         Uri requestUri = Uri.parse("/" + path);
         Uri remappedUri = null;
-        
+
         Log.d(LOG_TAG, "  Number of handlers: " + resourceHandlers.size());
-        
+
         // Try each handler in order
         for (int i = 0; i < resourceHandlers.size(); i++) {
             WebResourceHandler handler = resourceHandlers.get(i);
@@ -855,7 +906,7 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
                 break;
             }
         }
-        
+
         if (remappedUri != null) {
             try {
                 ResourceApi resourceApi = new ResourceApi(assetManager);
@@ -870,7 +921,7 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
         } else {
             Log.w(LOG_TAG, "  ❌ No handler matched for: " + path);
         }
-        
+
         return null;
     }
 
@@ -886,19 +937,20 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
         }
 
         String path = uri.getPath();
-        
+
         // Let Capacitor handle its own internal resources
         // These include native-bridge.js, capacitor.js, capacitor.config.json, etc.
-        if (path != null && (
-            path.equals("/native-bridge.js") ||
-            path.equals("/capacitor.js") ||
-            path.startsWith("/capacitor.") ||
-            path.equals("/cordova.js") ||  // Capacitor's Cordova compatibility layer
-            path.equals("/capacitor.plugins.json") ||
-            path.equals("/capacitor.config.json")
-        )) {
+        if (
+            path != null &&
+            (path.equals("/native-bridge.js") ||
+                path.equals("/capacitor.js") ||
+                path.startsWith("/capacitor.") ||
+                path.equals("/cordova.js") || // Capacitor's Cordova compatibility layer
+                path.equals("/capacitor.plugins.json") ||
+                path.equals("/capacitor.config.json"))
+        ) {
             Log.d(LOG_TAG, "🔍 Request: " + uri.toString() + " -> Letting Capacitor handle");
-            return null;  // Let Capacitor's built-in server handle these
+            return null; // Let Capacitor's built-in server handle these
         }
 
         Log.d(LOG_TAG, "🔍 Request: " + uri.toString());

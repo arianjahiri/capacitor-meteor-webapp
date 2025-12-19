@@ -3,7 +3,6 @@ package com.banjerluke.capacitormeteorwebapp;
 import android.content.res.AssetManager;
 import android.net.Uri;
 import android.webkit.MimeTypeMap;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -14,6 +13,7 @@ import java.io.InputStream;
  * for Capacitor implementation.
  */
 class ResourceApi {
+
     private final AssetManager assetManager;
 
     public ResourceApi(AssetManager assetManager) {
@@ -25,11 +25,11 @@ class ResourceApi {
      */
     public OpenForReadResult openForRead(Uri uri, boolean skipThreadCheck) throws IOException {
         String scheme = uri.getScheme();
-        
+
         if ("file".equals(scheme)) {
             // Handle file:// URIs
             String path = uri.getPath();
-            
+
             // Check if this is an android_asset path
             if (path != null && path.startsWith("/android_asset/")) {
                 // Remove /android_asset/ prefix
@@ -49,7 +49,7 @@ class ResourceApi {
                 return new OpenForReadResult(uri, inputStream, mimeType, length, null);
             }
         }
-        
+
         throw new IOException("Unsupported URI scheme: " + scheme);
     }
 
@@ -60,17 +60,17 @@ class ResourceApi {
         if (!"file".equals(uri.getScheme())) {
             return null;
         }
-        
+
         String path = uri.getPath();
         if (path == null) {
             return null;
         }
-        
+
         // Can't map android_asset paths to files
         if (path.startsWith("/android_asset/")) {
             return null;
         }
-        
+
         return new File(path);
     }
 
@@ -82,13 +82,13 @@ class ResourceApi {
         if (path == null) {
             return "application/octet-stream";
         }
-        
+
         String extension = "";
         int dotIndex = path.lastIndexOf('.');
         if (dotIndex >= 0) {
             extension = path.substring(dotIndex + 1);
         }
-        
+
         String mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension.toLowerCase());
         return mimeType != null ? mimeType : "application/octet-stream";
     }
@@ -97,6 +97,7 @@ class ResourceApi {
      * Result object for openForRead operations
      */
     public static class OpenForReadResult {
+
         public final Uri uri;
         public final InputStream inputStream;
         public final String mimeType;
@@ -112,4 +113,3 @@ class ResourceApi {
         }
     }
 }
-

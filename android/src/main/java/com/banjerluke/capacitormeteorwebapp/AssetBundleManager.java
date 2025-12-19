@@ -1,7 +1,6 @@
 package com.banjerluke.capacitormeteorwebapp;
 
 import android.util.Log;
-
 import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
@@ -9,7 +8,6 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
-
 import okhttp3.Call;
 import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
@@ -17,6 +15,7 @@ import okhttp3.Request;
 import okhttp3.Response;
 
 class AssetBundleManager {
+
     private static final String LOG_TAG = "MeteorWebApp";
 
     public interface Callback {
@@ -46,7 +45,8 @@ class AssetBundleManager {
     /** The initial asset bundle included in the app bundle */
     public final AssetBundle initialAssetBundle;
 
-    public AssetBundleManager(WebAppConfiguration webAppConfiguration, AssetBundle initialAssetBundle, File versionsDirectory) throws WebAppException {
+    public AssetBundleManager(WebAppConfiguration webAppConfiguration, AssetBundle initialAssetBundle, File versionsDirectory)
+        throws WebAppException {
         this.webAppConfiguration = webAppConfiguration;
         this.initialAssetBundle = initialAssetBundle;
         this.versionsDirectory = versionsDirectory;
@@ -60,7 +60,7 @@ class AssetBundleManager {
     }
 
     private void loadDownloadedAssetBundles() throws WebAppException {
-        for (File file: versionsDirectory.listFiles()) {
+        for (File file : versionsDirectory.listFiles()) {
             if (downloadDirectory.equals(file)) continue;
             if (partialDownloadDirectory.equals(file)) continue;
 
@@ -75,7 +75,7 @@ class AssetBundleManager {
         this.callback = callback;
     }
 
-    synchronized public AssetBundle downloadedAssetBundleWithVersion(String version) {
+    public synchronized AssetBundle downloadedAssetBundleWithVersion(String version) {
         return downloadedAssetBundlesByVersion.get(version);
     }
 
@@ -84,96 +84,100 @@ class AssetBundleManager {
 
         Request request = new Request.Builder().url(manifestUrl).build();
 
-        httpClient.newCall(request).enqueue(new okhttp3.Callback() {
-            @Override
-            public void onFailure(Call call, IOException e) {
-                if (!call.isCanceled()) {
-                    didFail(new WebAppException("Error downloading asset manifest", e));
+        httpClient
+            .newCall(request)
+            .enqueue(
+                new okhttp3.Callback() {
+                    @Override
+                    public void onFailure(Call call, IOException e) {
+                        if (!call.isCanceled()) {
+                            didFail(new WebAppException("Error downloading asset manifest", e));
+                        }
+                    }
+
+                    @Override
+                    public void onResponse(Call call, Response response) {
+                        if (!response.isSuccessful()) {
+                            didFail(new WebAppException("Non-success status code " + response.code() + "for asset manifest"));
+                            return;
+                        }
+
+                        byte[] manifestBytes;
+                        AssetManifest manifest;
+                        try {
+                            manifestBytes = response.body().bytes();
+                            manifest = new AssetManifest(new String(manifestBytes));
+                        } catch (WebAppException e) {
+                            didFail(e);
+                            return;
+                        } catch (IOException e) {
+                            didFail(e);
+                            return;
+                        }
+
+                        final String version = manifest.version;
+
+                        Log.d(LOG_TAG, "Downloaded asset manifest for version: " + version);
+
+                        if (assetBundleDownloader != null && assetBundleDownloader.getAssetBundle().getVersion().equals(version)) {
+                            Log.w(LOG_TAG, "Already downloading asset bundle version: " + version);
+                            return;
+                        }
+
+                        // Give the callback a chance to decide whether the version should be downloaded
+                        if (callback != null && !callback.shouldDownloadBundleForManifest(manifest)) {
+                            return;
+                        }
+
+                        // Cancel in progress download if there is one
+                        if (assetBundleDownloader != null) {
+                            assetBundleDownloader.cancel();
+                        }
+                        assetBundleDownloader = null;
+
+                        // There is no need to redownload the initial version
+                        if (initialAssetBundle.getVersion().equals(version)) {
+                            didFinishDownloadingAssetBundle(initialAssetBundle);
+                            return;
+                        }
+
+                        // If there is a previously downloaded asset bundle with the requested
+                        // version, use that
+                        AssetBundle downloadedAssetBundle = downloadedAssetBundleWithVersion(version);
+                        if (downloadedAssetBundle != null) {
+                            didFinishDownloadingAssetBundle(downloadedAssetBundle);
+                            return;
+                        }
+
+                        // Else, get ready to download the new asset bundle
+                        moveExistingDownloadDirectoryIfNeeded();
+
+                        // Create download directory
+                        if (!downloadDirectory.mkdir()) {
+                            didFail(new IOException("Could not create download directory"));
+                            return;
+                        }
+
+                        // Copy downloaded asset manifest to file
+                        File manifestFile = new File(downloadDirectory, "program.json");
+                        try {
+                            IOUtils.writeToFile(manifestBytes, manifestFile);
+                        } catch (IOException e) {
+                            didFail(e);
+                            return;
+                        }
+
+                        AssetBundle assetBundle = null;
+                        try {
+                            assetBundle = new AssetBundle(downloadDirectory, manifest, initialAssetBundle);
+                        } catch (WebAppException e) {
+                            didFail(e);
+                            return;
+                        }
+                        downloadAssetBundle(assetBundle, baseUrl);
+                    }
                 }
-            }
-
-            @Override
-            public void onResponse(Call call, Response response) {
-                if (!response.isSuccessful()) {
-                    didFail(new WebAppException("Non-success status code " + response.code() + "for asset manifest"));
-                    return;
-                }
-
-                byte[] manifestBytes;
-                AssetManifest manifest;
-                try {
-                    manifestBytes = response.body().bytes();
-                    manifest = new AssetManifest(new String(manifestBytes));
-                } catch (WebAppException e) {
-                    didFail(e);
-                    return;
-                } catch (IOException e) {
-                    didFail(e);
-                    return;
-                }
-
-                final String version = manifest.version;
-
-                Log.d(LOG_TAG, "Downloaded asset manifest for version: " + version);
-
-                if (assetBundleDownloader != null && assetBundleDownloader.getAssetBundle().getVersion().equals(version)) {
-                    Log.w(LOG_TAG, "Already downloading asset bundle version: " + version);
-                    return;
-                }
-
-                // Give the callback a chance to decide whether the version should be downloaded
-                if (callback != null && !callback.shouldDownloadBundleForManifest(manifest)) {
-                    return;
-                }
-
-                // Cancel in progress download if there is one
-                if (assetBundleDownloader != null) {
-                    assetBundleDownloader.cancel();
-                }
-                assetBundleDownloader = null;
-
-                // There is no need to redownload the initial version
-                if (initialAssetBundle.getVersion().equals(version)) {
-                    didFinishDownloadingAssetBundle(initialAssetBundle);
-                    return;
-                }
-
-                // If there is a previously downloaded asset bundle with the requested
-                // version, use that
-                AssetBundle downloadedAssetBundle = downloadedAssetBundleWithVersion(version);
-                if (downloadedAssetBundle != null) {
-                    didFinishDownloadingAssetBundle(downloadedAssetBundle);
-                    return;
-                }
-
-                // Else, get ready to download the new asset bundle
-                moveExistingDownloadDirectoryIfNeeded();
-
-                // Create download directory
-                if (!downloadDirectory.mkdir()) {
-                    didFail(new IOException("Could not create download directory"));
-                    return;
-                }
-
-                // Copy downloaded asset manifest to file
-                File manifestFile = new File(downloadDirectory, "program.json");
-                try {
-                    IOUtils.writeToFile(manifestBytes, manifestFile);
-                } catch (IOException e) {
-                    didFail(e);
-                    return;
-                }
-
-                AssetBundle assetBundle = null;
-                try {
-                    assetBundle = new AssetBundle(downloadDirectory, manifest, initialAssetBundle);
-                } catch (WebAppException e) {
-                    didFail(e);
-                    return;
-                }
-                downloadAssetBundle(assetBundle, baseUrl);
-            }
-        });
+            );
     }
 
     /** If there is an existing Downloading directory, move it
@@ -207,7 +211,7 @@ class AssetBundleManager {
         return assetBundleDownloader != null;
     }
 
-    synchronized protected void downloadAssetBundle(final AssetBundle assetBundle, HttpUrl baseUrl) {
+    protected synchronized void downloadAssetBundle(final AssetBundle assetBundle, HttpUrl baseUrl) {
         Set<AssetBundle.Asset> missingAssets = new HashSet<AssetBundle.Asset>();
 
         for (AssetBundle.Asset asset : assetBundle.getOwnAssets()) {
@@ -241,20 +245,22 @@ class AssetBundleManager {
         }
 
         assetBundleDownloader = new AssetBundleDownloader(webAppConfiguration, assetBundle, baseUrl, missingAssets);
-        assetBundleDownloader.setCallback(new AssetBundleDownloader.Callback() {
-            @Override
-            public void onFinished() {
-                assetBundleDownloader = null;
+        assetBundleDownloader.setCallback(
+            new AssetBundleDownloader.Callback() {
+                @Override
+                public void onFinished() {
+                    assetBundleDownloader = null;
 
-                moveDownloadedAssetBundleIntoPlace(assetBundle);
-                didFinishDownloadingAssetBundle(assetBundle);
-            }
+                    moveDownloadedAssetBundleIntoPlace(assetBundle);
+                    didFinishDownloadingAssetBundle(assetBundle);
+                }
 
-            @Override
-            public void onFailure(Throwable cause) {
-                didFail(cause);
+                @Override
+                public void onFailure(Throwable cause) {
+                    didFail(cause);
+                }
             }
-        });
+        );
         assetBundleDownloader.resume();
     }
 
@@ -294,7 +300,7 @@ class AssetBundleManager {
     }
 
     /** Move the downloaded asset bundle to a new directory named after the version */
-    synchronized protected void moveDownloadedAssetBundleIntoPlace(AssetBundle assetBundle) {
+    protected synchronized void moveDownloadedAssetBundleIntoPlace(AssetBundle assetBundle) {
         final String version = assetBundle.getVersion();
         File versionDirectory = new File(versionsDirectory, version);
         downloadDirectory.renameTo(versionDirectory);

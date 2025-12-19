@@ -1,6 +1,7 @@
 package com.banjerluke.capacitormeteorwebapp;
 
 class WebAppException extends Exception {
+
     public WebAppException(String detailMessage) {
         super(detailMessage);
     }

@@ -2,7 +2,6 @@ package com.banjerluke.capacitormeteorwebapp;
 
 import android.content.res.AssetManager;
 import android.util.Log;
-
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
@@ -12,15 +11,16 @@ import java.util.Set;
  * This improves performance by caching the list of assets
  */
 class AssetManagerCache {
+
     private static final String LOG_TAG = "MeteorWebApp";
-    
+
     private final AssetManager assetManager;
     private final Set<String> assetPaths;
 
     public AssetManagerCache(AssetManager assetManager) throws IOException {
         this.assetManager = assetManager;
         this.assetPaths = new HashSet<>();
-        
+
         // Recursively list all assets
         listAssets("", assetPaths);
     }
@@ -50,4 +50,3 @@ class AssetManagerCache {
         return assetPaths.contains(path);
     }
 }
-

@@ -2,12 +2,12 @@ package com.banjerluke.capacitormeteorwebapp;
 
 import android.content.SharedPreferences;
 import android.util.Log;
-
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
 class WebAppConfiguration {
+
     private SharedPreferences preferences;
 
     public WebAppConfiguration(SharedPreferences preferences) {

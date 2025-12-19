@@ -13,4 +13,3 @@ interface WebResourceHandler {
      */
     Uri remapUri(Uri uri);
 }
-

@@ -2,10 +2,6 @@ package com.banjerluke.capacitormeteorwebapp;
 
 import android.net.Uri;
 import android.util.Log;
-
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -17,13 +13,19 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 class AssetBundle {
+
     private static final String LOG_TAG = "MeteorWebApp";
 
-    static final Pattern runtimeConfigPattern = Pattern.compile("__meteor_runtime_config__ = JSON.parse\\(decodeURIComponent\\(\"([^\"]*)\"\\)\\)");
+    static final Pattern runtimeConfigPattern = Pattern.compile(
+        "__meteor_runtime_config__ = JSON.parse\\(decodeURIComponent\\(\"([^\"]*)\"\\)\\)"
+    );
 
     final class Asset {
+
         final String filePath;
         final String urlPath;
         final String fileType;
@@ -95,7 +97,8 @@ class AssetBundle {
         this(null, Uri.fromFile(directory), manifest, parentAssetBundle);
     }
 
-    public AssetBundle(ResourceApi resourceApi, Uri directoryUri, AssetManifest manifest, AssetBundle parentAssetBundle) throws WebAppException {
+    public AssetBundle(ResourceApi resourceApi, Uri directoryUri, AssetManifest manifest, AssetBundle parentAssetBundle)
+        throws WebAppException {
         Log.w(LOG_TAG, "Loading asset bundle from directory " + directoryUri.toString());
 
         this.resourceApi = resourceApi;
@@ -143,7 +146,10 @@ class AssetBundle {
     public Asset assetForUrlPath(String urlPath) {
         Asset asset = ownAssetsByURLPath.get(urlPath);
         if (asset == null && parentAssetBundle != null) {
-            Log.d(LOG_TAG, "Asset " + urlPath + " not found in bundle " + version + ":" + directoryUri.toString() + ", serving from parent bundle");
+            Log.d(
+                LOG_TAG,
+                "Asset " + urlPath + " not found in bundle " + version + ":" + directoryUri.toString() + ", serving from parent bundle"
+            );
             asset = parentAssetBundle.assetForUrlPath(urlPath);
         } else if (asset == null) {
             Log.w(LOG_TAG, "Asset " + urlPath + " not found in bundle " + version + ":" + directoryUri.toString() + ", no parent bundle");
@@ -283,8 +289,7 @@ class AssetBundle {
             if (inputStream != null) {
                 try {
                     inputStream.close();
-                } catch (IOException e) {
-                }
+                } catch (IOException e) {}
             }
         }
     }

@@ -2,10 +2,6 @@ package com.banjerluke.capacitormeteorwebapp;
 
 import android.net.Uri;
 import android.util.Log;
-
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.io.File;
 import java.io.IOException;
 import java.util.Collections;
@@ -13,14 +9,16 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
 import okhttp3.Call;
 import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 class AssetBundleDownloader {
+
     private static final String LOG_TAG = "MeteorWebApp";
 
     static final Pattern eTagWithSha1HashPattern = Pattern.compile("\"([0-9a-f]{40})\"");
@@ -41,7 +39,12 @@ class AssetBundleDownloader {
     private final Set<AssetBundle.Asset> assetsDownloading;
     private boolean canceled;
 
-    public AssetBundleDownloader(WebAppConfiguration webAppConfiguration, AssetBundle assetBundle, HttpUrl baseUrl, Set<AssetBundle.Asset> missingAssets) {
+    public AssetBundleDownloader(
+        WebAppConfiguration webAppConfiguration,
+        AssetBundle assetBundle,
+        HttpUrl baseUrl,
+        Set<AssetBundle.Asset> missingAssets
+    ) {
         this.webAppConfiguration = webAppConfiguration;
         this.assetBundle = assetBundle;
         this.baseUrl = baseUrl;
@@ -72,63 +75,67 @@ class AssetBundleDownloader {
 
                 HttpUrl url = downloadUrlForAsset(asset);
                 Request request = new Request.Builder().url(url).build();
-                httpClient.newCall(request).enqueue(new okhttp3.Callback() {
-                    @Override
-                    public void onFailure(Call call, IOException e) {
-                        assetsDownloading.remove(asset);
+                httpClient
+                    .newCall(request)
+                    .enqueue(
+                        new okhttp3.Callback() {
+                            @Override
+                            public void onFailure(Call call, IOException e) {
+                                assetsDownloading.remove(asset);
 
-                        if (!call.isCanceled()) {
-                            didFail(new WebAppException("Error downloading asset: " + asset, e));
-                        }
-                    }
-
-                    @Override
-                    public void onResponse(Call call, Response response) throws IOException {
-                        assetsDownloading.remove(asset);
-
-                        try {
-                            verifyResponse(response, asset);
-                        } catch (WebAppException e) {
-                            didFail(e);
-                            return;
-                        }
-
-                        try {
-                            File file = IOUtils.writeToFile(response.body().source(), asset.getTemporaryFile());
-                            if (!file.renameTo(asset.getFile())) {
-                                throw new IOException("Failed to rename a temporary download file.");
+                                if (!call.isCanceled()) {
+                                    didFail(new WebAppException("Error downloading asset: " + asset, e));
+                                }
                             }
-                        } catch (Exception e) {
-                            didFail(e);
-                            return;
-                        }
 
-                        // We don't have a hash for the index page, so we have to parse the runtime config
-                        // and compare autoupdateVersionCordova to the version in the manifest to verify
-                        // if we downloaded the expected version
-                        if (asset.filePath.equals("index.html")) {
-                            JSONObject runtimeConfig = assetBundle.getRuntimeConfig();
-                            if (runtimeConfig != null) {
+                            @Override
+                            public void onResponse(Call call, Response response) throws IOException {
+                                assetsDownloading.remove(asset);
+
                                 try {
-                                    verifyRuntimeConfig(runtimeConfig);
+                                    verifyResponse(response, asset);
                                 } catch (WebAppException e) {
                                     didFail(e);
                                     return;
                                 }
+
+                                try {
+                                    File file = IOUtils.writeToFile(response.body().source(), asset.getTemporaryFile());
+                                    if (!file.renameTo(asset.getFile())) {
+                                        throw new IOException("Failed to rename a temporary download file.");
+                                    }
+                                } catch (Exception e) {
+                                    didFail(e);
+                                    return;
+                                }
+
+                                // We don't have a hash for the index page, so we have to parse the runtime config
+                                // and compare autoupdateVersionCordova to the version in the manifest to verify
+                                // if we downloaded the expected version
+                                if (asset.filePath.equals("index.html")) {
+                                    JSONObject runtimeConfig = assetBundle.getRuntimeConfig();
+                                    if (runtimeConfig != null) {
+                                        try {
+                                            verifyRuntimeConfig(runtimeConfig);
+                                        } catch (WebAppException e) {
+                                            didFail(e);
+                                            return;
+                                        }
+                                    }
+                                }
+
+                                missingAssets.remove(asset);
+
+                                if (missingAssets.isEmpty()) {
+                                    Log.d(LOG_TAG, "Finished downloading new asset bundle version: " + assetBundle.getVersion());
+
+                                    if (callback != null) {
+                                        callback.onFinished();
+                                    }
+                                }
                             }
                         }
-
-                        missingAssets.remove(asset);
-
-                        if (missingAssets.isEmpty()) {
-                            Log.d(LOG_TAG, "Finished downloading new asset bundle version: " + assetBundle.getVersion());
-
-                            if (callback != null) {
-                                callback.onFinished();
-                            }
-                        }
-                    }
-                });
+                    );
             }
         }
     }
@@ -192,14 +199,16 @@ class AssetBundleDownloader {
             rootUrlString = runtimeConfig.getString("ROOT_URL");
             Uri rootUrl = Uri.parse(rootUrlString);
             Log.d(LOG_TAG, "Downloaded bundle ROOT_URL: " + rootUrlString);
-            
+
             // Check if previous ROOT_URL exists (may be null on first run)
             String previousRootUrlString = webAppConfiguration.getRootUrlString();
             if (previousRootUrlString != null) {
                 Log.d(LOG_TAG, "Previous ROOT_URL: " + previousRootUrlString);
                 Uri previousRootUrl = Uri.parse(previousRootUrlString);
                 if (!"localhost".equals(previousRootUrl.getHost()) && "localhost".equals(rootUrl.getHost())) {
-                    throw new WebAppException("ROOT_URL in downloaded asset bundle would change current ROOT_URL to localhost. Make sure ROOT_URL has been configured correctly on the server.");
+                    throw new WebAppException(
+                        "ROOT_URL in downloaded asset bundle would change current ROOT_URL to localhost. Make sure ROOT_URL has been configured correctly on the server."
+                    );
                 }
             } else {
                 Log.i(LOG_TAG, "No previous ROOT_URL configured (first run) - skipping ROOT_URL validation");
@@ -212,12 +221,16 @@ class AssetBundleDownloader {
             String appId = runtimeConfig.getString("appId");
             String configAppId = webAppConfiguration.getAppId();
             Log.d(LOG_TAG, "Downloaded bundle appId: " + appId);
-            
+
             // Only check appId if we have a previous one configured (may be null on first run)
             if (configAppId != null) {
                 Log.d(LOG_TAG, "Previous appId: " + configAppId);
                 if (!appId.equals(configAppId)) {
-                    throw new WebAppException("appId in downloaded asset bundle does not match current appId. Make sure the server at " + rootUrlString + " is serving the right app.");
+                    throw new WebAppException(
+                        "appId in downloaded asset bundle does not match current appId. Make sure the server at " +
+                        rootUrlString +
+                        " is serving the right app."
+                    );
                 }
             } else {
                 Log.i(LOG_TAG, "No previous appId configured (first run) - skipping appId validation");

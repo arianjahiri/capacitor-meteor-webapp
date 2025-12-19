@@ -296,8 +296,13 @@ public protocol CapacitorBridge: AnyObject {
             return
         }
 
+        #if DEBUG
+        logger.info("Checking for updates in DEBUG (development) build")
         let baseURL = rootURL.appendingPathComponent("__cordova/")
         assetBundleManager.checkForUpdatesWithBaseURL(baseURL)
+        #else
+        logger.info("Skipping updates check in production build")
+        #endif
 
         // Note: Actual completion will be called through delegate methods
         completion(nil)

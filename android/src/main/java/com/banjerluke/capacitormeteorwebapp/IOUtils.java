@@ -5,12 +5,12 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-
 import okio.BufferedSink;
 import okio.Okio;
 import okio.Source;
 
 class IOUtils {
+
     private static final String LOG_TAG = IOUtils.class.getSimpleName();
 
     public static String stringFromInputStream(InputStream inputStream) throws IOException {

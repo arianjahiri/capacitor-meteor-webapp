@@ -1,16 +1,17 @@
 package com.banjerluke.capacitormeteorwebapp;
 
+import java.util.ArrayList;
+import java.util.List;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.util.ArrayList;
-import java.util.List;
-
 final class AssetManifest {
+
     private static final String LOG_TAG = "MeteorWebApp";
 
     static final class Entry {
+
         final String filePath;
         final String urlPath;
         final String fileType;
@@ -19,7 +20,15 @@ final class AssetManifest {
         final String sourceMapFilePath;
         final String sourceMapUrlPath;
 
-        Entry(String filePath, String urlPath, String fileType, boolean cacheable, String hash, String sourceMapFilePath, String sourceMapUrlPath) {
+        Entry(
+            String filePath,
+            String urlPath,
+            String fileType,
+            boolean cacheable,
+            String hash,
+            String sourceMapFilePath,
+            String sourceMapUrlPath
+        ) {
             this.filePath = filePath;
             this.urlPath = urlPath;
             this.fileType = fileType;

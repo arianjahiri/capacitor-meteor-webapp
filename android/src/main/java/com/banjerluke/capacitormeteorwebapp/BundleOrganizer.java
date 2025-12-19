@@ -16,8 +16,9 @@ import java.util.regex.Pattern;
  * and directory structure creation for Meteor webapp assets.
  */
 public class BundleOrganizer {
+
     private static final String LOG_TAG = "BundleOrganizer";
-    
+
     /**
      * Organizes files in a bundle directory according to their URL mappings
      */
@@ -48,7 +49,8 @@ public class BundleOrganizer {
     /**
      * Organizes a single asset according to its URL path mapping
      */
-    private static void organizeAsset(AssetBundle.Asset asset, AssetBundle bundle, File targetDirectory, AssetManager assetManager) throws WebAppException {
+    private static void organizeAsset(AssetBundle.Asset asset, AssetBundle bundle, File targetDirectory, AssetManager assetManager)
+        throws WebAppException {
         File targetFile = targetURLForAsset(asset, targetDirectory);
 
         // Ensure the target directory structure exists
@@ -174,10 +176,11 @@ public class BundleOrganizer {
      * @param targetFile The target file to copy to
      * @param assetManager The AssetManager to use
      */
-    private static void copyFromAssetBundle(String assetPath, AssetBundle bundle, File targetFile, AssetManager assetManager) throws IOException {
+    private static void copyFromAssetBundle(String assetPath, AssetBundle bundle, File targetFile, AssetManager assetManager)
+        throws IOException {
         // Get the bundle's directory path
         String bundleDirPath = bundle.getDirectory() != null ? bundle.getDirectory().getAbsolutePath() : "";
-        
+
         // Extract the asset-relative path
         // If bundleDirPath is "/android_asset/public", we want to access "public/app/main.js"
         String assetRelativePath = assetPath;
@@ -185,29 +188,29 @@ public class BundleOrganizer {
             // Extract the part after "android_asset/"
             int startIndex = bundleDirPath.indexOf("android_asset/") + "android_asset/".length();
             String baseDir = bundleDirPath.substring(startIndex);
-            
+
             // Remove leading slash
             if (baseDir.startsWith("/")) {
                 baseDir = baseDir.substring(1);
             }
-            
+
             // Combine base directory with asset path
             if (!baseDir.isEmpty()) {
                 assetRelativePath = baseDir + "/" + assetPath;
             }
         }
-        
+
         Log.d(LOG_TAG, "Copying asset from: " + assetRelativePath + " to: " + targetFile.getAbsolutePath());
-        
+
         InputStream is = assetManager.open(assetRelativePath);
         FileOutputStream fos = new FileOutputStream(targetFile);
-        
+
         byte[] buffer = new byte[8192];
         int bytesRead;
         while ((bytesRead = is.read(buffer)) != -1) {
             fos.write(buffer, 0, bytesRead);
         }
-        
+
         fos.close();
         is.close();
     }
@@ -215,20 +218,21 @@ public class BundleOrganizer {
     /**
      * Organizes index.html from Android assets, injecting the WebAppLocalServer shim
      */
-    private static void organizeIndexHtmlFromAsset(String assetPath, AssetBundle bundle, File targetFile, AssetManager assetManager) throws IOException, WebAppException {
+    private static void organizeIndexHtmlFromAsset(String assetPath, AssetBundle bundle, File targetFile, AssetManager assetManager)
+        throws IOException, WebAppException {
         // Get the bundle's directory path
         String bundleDirPath = bundle.getDirectory() != null ? bundle.getDirectory().getAbsolutePath() : "";
-        
+
         // Extract the asset-relative path
         String assetRelativePath = assetPath;
         if (bundleDirPath.contains("android_asset/")) {
             int startIndex = bundleDirPath.indexOf("android_asset/") + "android_asset/".length();
             String baseDir = bundleDirPath.substring(startIndex);
-            
+
             if (baseDir.startsWith("/")) {
                 baseDir = baseDir.substring(1);
             }
-            
+
             if (!baseDir.isEmpty()) {
                 assetRelativePath = baseDir + "/" + assetPath;
             }
@@ -252,7 +256,7 @@ public class BundleOrganizer {
 
     /**
      * Extracts the shim injection logic for reuse
-     * 
+     *
      * RE-ENABLED: Shim injection with CORS bypass for Android WebView.
      * This injects both the WebAppLocalServer compatibility shim AND
      * a CORS bypass that allows cross-origin requests from the WebView.
@@ -260,7 +264,7 @@ public class BundleOrganizer {
     private static String injectShimIntoHtml(String originalContent) {
         // CORS BYPASS SCRIPT - Completely disables CORS at the JavaScript level
         // This is necessary because Android WebView enforces CORS even for custom schemes
-        String corsbypassScript = 
+        String corsbypassScript =
             "<script type=\"text/javascript\">\n" +
             "// ============================================================================\n" +
             "// CORS BYPASS for Android WebView\n" +
@@ -314,7 +318,7 @@ public class BundleOrganizer {
             "    console.log('[CORS Bypass] ✅ CORS bypass installed - all cross-origin requests allowed');\n" +
             "})();\n" +
             "</script>\n";
-        
+
         // WebAppLocalServer shim script
         String webAppLocalServerShim =
             "<script type=\"text/javascript\">\n" +
@@ -388,7 +392,7 @@ public class BundleOrganizer {
         // This guarantees both CORS bypass and WebAppLocalServer are defined before any Meteor code runs
         String modifiedContent;
         Pattern headOpenPattern = Pattern.compile("(<head[^>]*>)", Pattern.CASE_INSENSITIVE);
-        
+
         if (headOpenPattern.matcher(originalContent).find()) {
             // Inject shims right after <head> opens (as first child of head)
             modifiedContent = headOpenPattern.matcher(originalContent).replaceFirst("$1" + combinedShim);
@@ -396,7 +400,7 @@ public class BundleOrganizer {
         } else {
             // Fall back to injecting after <html> tag if no <head> found
             Pattern htmlOpenPattern = Pattern.compile("(<html[^>]*>)", Pattern.CASE_INSENSITIVE);
-            
+
             if (htmlOpenPattern.matcher(originalContent).find()) {
                 modifiedContent = htmlOpenPattern.matcher(originalContent).replaceFirst("$1" + combinedShim);
                 Log.d(LOG_TAG, "Injected CORS bypass and WebAppLocalServer shim after <html> (fallback - no head tag found)");
@@ -410,4 +414,3 @@ public class BundleOrganizer {
         return modifiedContent;
     }
 }
-
