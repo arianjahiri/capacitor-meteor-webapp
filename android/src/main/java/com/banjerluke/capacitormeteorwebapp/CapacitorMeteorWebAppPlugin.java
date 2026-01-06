@@ -589,7 +589,7 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
                     AlertDialog.Builder builder = new AlertDialog.Builder(getActivity());
                     builder.setTitle("Update available");
                     builder.setMessage(
-                        "A new version (" + version + ") is ready to install. Would you like to update now?"
+                        "A new version is ready to install. Would you like to update now?"
                     );
                     builder.setCancelable(false);
                     builder.setNegativeButton(
