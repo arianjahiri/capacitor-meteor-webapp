@@ -1,6 +1,8 @@
 package com.banjerluke.capacitormeteorwebapp;
 
+import android.app.AlertDialog;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.res.AssetManager;
@@ -57,6 +59,7 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
      * loading assets from different bundles.
      */
     private AssetBundle pendingAssetBundle;
+    private String activeUpdatePromptVersion;
 
     /** Directory for serving organized bundles */
     private File servingDirectory;
@@ -421,11 +424,10 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
             return;
         }
 
-        if (isProduction()) {
-            Log.i(LOG_TAG, "checkForUpdates() skipped in Production");
-            call.resolve();
-            return;
-        }
+        Log.i(
+            LOG_TAG,
+            "checkForUpdates() running in " + (isProduction() ? "Production" : "Debug") + " build"
+        );
 
         new Thread(
             new Runnable() {
@@ -501,50 +503,127 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
     @PluginMethod
     public void reload(final PluginCall call) {
         Log.i(LOG_TAG, "reload() called from JavaScript");
+        reloadPendingBundle(call);
+    }
 
-        if (pendingAssetBundle != null) {
-            Log.i(LOG_TAG, "Reloading with pending version " + pendingAssetBundle.getVersion());
+    private void reloadPendingBundle(@Nullable final PluginCall call) {
+        if (pendingAssetBundle == null) {
+            Log.w(LOG_TAG, "No pending version to reload");
+            if (call != null) {
+                call.resolve();
+            }
+            return;
+        }
 
-            try {
-                // Organize the pending bundle for serving
-                File bundleServingDirectory = new File(servingDirectory, pendingAssetBundle.getVersion());
+        new Thread(
+            new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        File bundleServingDirectory = new File(servingDirectory, pendingAssetBundle.getVersion());
 
-                // Remove existing serving directory for this version
-                if (bundleServingDirectory.exists()) {
-                    if (!IOUtils.deleteRecursively(bundleServingDirectory)) {
-                        Log.w(LOG_TAG, "Could not delete existing serving directory");
+                        if (bundleServingDirectory.exists()) {
+                            if (!IOUtils.deleteRecursively(bundleServingDirectory)) {
+                                Log.w(LOG_TAG, "Could not delete existing serving directory");
+                            }
+                        }
+
+                        BundleOrganizer.organizeBundle(pendingAssetBundle, bundleServingDirectory, assetManager);
+
+                        currentAssetBundle = pendingAssetBundle;
+                        pendingAssetBundle = null;
+                        switchedToNewVersion = true;
+
+                        Runnable reloadWebView =
+                            new Runnable() {
+                                @Override
+                                public void run() {
+                                    onReset();
+                                    if (bridge != null && bridge.getWebView() != null) {
+                                        bridge.getWebView().reload();
+                                    }
+                                    if (call != null) {
+                                        call.resolve();
+                                    }
+                                }
+                            };
+
+                        if (getActivity() != null) {
+                            getActivity().runOnUiThread(reloadWebView);
+                        } else {
+                            reloadWebView.run();
+                        }
+                    } catch (final WebAppException e) {
+                        Log.e(LOG_TAG, "Could not organize pending bundle", e);
+                        if (call != null) {
+                            call.reject("Could not organize pending bundle: " + e.getMessage());
+                        } else {
+                            notifyListeners(
+                                "error",
+                                new JSObject().put("message", "Update failed: " + e.getMessage())
+                            );
+                        }
                     }
                 }
+            }
+        )
+            .start();
+    }
 
-                // Organize the bundle (this injects the WebAppLocalServer shim)
-                BundleOrganizer.organizeBundle(pendingAssetBundle, bundleServingDirectory, assetManager);
+    private void showUpdatePrompt(final String version) {
+        if (getActivity() == null) {
+            Log.w(LOG_TAG, "Cannot show update prompt - activity is null");
+            return;
+        }
 
-                // Make atomic switch
-                currentAssetBundle = pendingAssetBundle;
-                pendingAssetBundle = null;
-                switchedToNewVersion = true;
+        getActivity().runOnUiThread(
+            new Runnable() {
+                @Override
+                public void run() {
+                    if (version.equals(activeUpdatePromptVersion)) {
+                        return;
+                    }
 
-                // Reload the WebView
-                getActivity().runOnUiThread(
-                        new Runnable() {
+                    activeUpdatePromptVersion = version;
+
+                    AlertDialog.Builder builder = new AlertDialog.Builder(getActivity());
+                    builder.setTitle("Update available");
+                    builder.setMessage(
+                        "A new version (" + version + ") is ready to install. Would you like to update now?"
+                    );
+                    builder.setCancelable(false);
+                    builder.setNegativeButton(
+                        "Later",
+                        new DialogInterface.OnClickListener() {
                             @Override
-                            public void run() {
-                                onReset();
-                                if (bridge != null && bridge.getWebView() != null) {
-                                    bridge.getWebView().reload();
-                                }
-                                call.resolve();
+                            public void onClick(DialogInterface dialog, int which) {
+                                activeUpdatePromptVersion = null;
+                                dialog.dismiss();
                             }
                         }
                     );
-            } catch (WebAppException e) {
-                Log.e(LOG_TAG, "Could not organize pending bundle", e);
-                call.reject("Could not organize pending bundle: " + e.getMessage());
+                    builder.setPositiveButton(
+                        "Update",
+                        new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialog, int which) {
+                                activeUpdatePromptVersion = null;
+                                reloadPendingBundle(null);
+                            }
+                        }
+                    );
+                    builder.setOnDismissListener(
+                        new DialogInterface.OnDismissListener() {
+                            @Override
+                            public void onDismiss(DialogInterface dialog) {
+                                activeUpdatePromptVersion = null;
+                            }
+                        }
+                    );
+                    builder.show();
+                }
             }
-        } else {
-            Log.w(LOG_TAG, "No pending version to reload");
-            call.resolve();
-        }
+        );
     }
 
     //endregion
@@ -634,52 +713,8 @@ public class CapacitorMeteorWebAppPlugin extends Plugin implements AssetBundleMa
         // Notify JavaScript of new version ready
         notifyListeners("newVersionReady", new JSObject().put("version", assetBundle.getVersion()));
 
-        // ============================================================================
-        // TODO: REMOVE THIS - TEMPORARY AUTO-RELOAD FOR TESTING
-        // In production, the Meteor app should call WebAppLocalServer.switchToPendingVersion()
-        // when it's ready to reload (e.g., after showing a prompt to the user)
-        // ============================================================================
-        Log.w(LOG_TAG, "⚠️ TEMPORARY: Auto-reloading with new version " + assetBundle.getVersion());
+        showUpdatePrompt(assetBundle.getVersion());
 
-        getActivity().runOnUiThread(
-                new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
-                            // Organize the pending bundle for serving
-                            File bundleServingDirectory = new File(servingDirectory, pendingAssetBundle.getVersion());
-
-                            // Remove existing serving directory for this version
-                            if (bundleServingDirectory.exists()) {
-                                if (!IOUtils.deleteRecursively(bundleServingDirectory)) {
-                                    Log.w(LOG_TAG, "Could not delete existing serving directory");
-                                }
-                            }
-
-                            // Organize the bundle (this injects the WebAppLocalServer shim)
-                            BundleOrganizer.organizeBundle(pendingAssetBundle, bundleServingDirectory, assetManager);
-
-                            // Make atomic switch
-                            currentAssetBundle = pendingAssetBundle;
-                            pendingAssetBundle = null;
-                            switchedToNewVersion = true;
-
-                            Log.i(LOG_TAG, "⚠️ TEMPORARY: Reloading WebView with new version");
-
-                            // Reload the WebView
-                            onReset();
-                            if (bridge != null && bridge.getWebView() != null) {
-                                bridge.getWebView().reload();
-                            }
-                        } catch (WebAppException e) {
-                            Log.e(LOG_TAG, "Could not organize pending bundle for auto-reload", e);
-                        }
-                    }
-                }
-            );
-        // ============================================================================
-        // END TEMPORARY AUTO-RELOAD CODE
-        // ============================================================================
     }
 
     @Override

@@ -1,4 +1,4 @@
-arguments=--init-script /var/folders/7y/m983mjwj6092rchkwxwt6_nh0000gn/T/db3b08fc4a9ef609cb16b96b200fa13e563f396e9bb1ed0905fdab7bc3bc513b.gradle
+arguments=--init-script /Users/arianjahiri/.local/share/opencode/bin/jdtls/config_mac/org.eclipse.osgi/59/0/.cp/gradle/init/init.gradle
 auto.sync=false
 build.scans.enabled=false
 connection.gradle.distribution=GRADLE_DISTRIBUTION(WRAPPER)
